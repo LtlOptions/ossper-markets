@@ -1,15 +1,24 @@
-# Ossper Markets v1.4.0 — Admin Command Center
+# Ossper Markets v1.5.0 — Demo Ready
 
-Admin-only UI upgrade. This patch keeps the existing v1.3 backend/API and PostgreSQL data intact.
+Community prediction market for tournament events. Virtual money only.
 
-Changes:
-- Command-center overview with system, market, trading, match, and volume stats.
-- Live operational summary.
-- Cleaner tournament match cards with lifecycle-aware actions.
-- Admin role management retained.
-- Emergency freeze/unfreeze retained.
-- Audit log retained.
-- Automatic admin dashboard refresh every 10 seconds.
-- Mobile-responsive layout.
+## v1.5 changes
+- User help / onboarding guide explaining markets, prices, positions, lifecycle, depth, notifications, freeze controls, and virtual money.
+- First-visit welcome card with a link to the guide.
+- Persistent in-app notification bell for trading close, awaiting-result, and settlement events.
+- Tournament markets can be binary 1v1/2v2 or Pick a Winner with 3–20 outcomes.
+- Multi-outcome prices and positions are server-authoritative and settle to $1 for the winning outcome.
+- Settings expanded with extra background palette colors and custom six-digit hex background color.
+- Admin audit log is paginated and filterable by action, actor, and market ID.
+- Existing admin dashboard, Discord roles, emergency freeze, PostgreSQL ledger, and audit trail preserved.
+- Additive PostgreSQL migrations only; no database wipe required.
 
-No database migration or environment-variable changes are required.
+## Required environment variables
+- DATABASE_URL
+- OSSPER_ADMIN_KEY
+- DISCORD_CLIENT_ID
+- DISCORD_CLIENT_SECRET
+- DISCORD_REDIRECT_URI
+- OSSPER_AUTH_SECRET
+
+Virtual-money demo only. Do not treat this as a real-money platform.
