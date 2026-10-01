@@ -475,7 +475,7 @@ app.get("/api/admin/audit", adminOnly, async (_req, res) => {
 });
 
 app.get("/admin", (_req, res) => res.sendFile(path.join(publicDir, "admin.html")));
-app.get("*", (_req, res) => res.sendFile(path.join(publicDir, "index.html")));
+app.use((_req, res) => res.sendFile(path.join(publicDir, "index.html")));
 
 initDb()
   .then(() => {
