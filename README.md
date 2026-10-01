@@ -1,9 +1,17 @@
 # Ossper Markets
 
-Minimal deployment starter for the live Ossper test.
+Community prediction market prototype for STRAFTAT tournaments.
 
-Run locally with:
-npm install
-npm start
+## Current stage
 
-No secrets are included in this repository. Discord OAuth and the production database will be added later.
+- Railway deployment
+- HTTPS
+- Express backend
+- Helmet security headers
+- Rate limiting
+- External frontend JavaScript
+- Virtual money only
+
+The current balance is intentionally browser-side for this deployment test. It is **not** a secure trading balance yet.
+
+Next stage: move accounts, balances, positions, trades, and the ledger to the backend/database so the server is authoritative.

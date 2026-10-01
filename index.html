@@ -1,45 +1,79 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ossper Markets</title>
-<style>
-body{margin:0;background:#07111f;color:#edf4ff;font-family:system-ui,-apple-system,sans-serif}
-main{max-width:900px;margin:auto;padding:40px 22px}
-.card{background:#0d1a2b;border:1px solid #1d3047;border-radius:18px;padding:24px;margin-top:20px}
-h1{font-size:38px;margin:0 0 8px}.muted{color:#91a3ba}
-.balance{font-size:32px;font-weight:800;margin:24px 0}
-button{padding:13px 18px;border-radius:10px;border:1px solid #35506d;background:#142842;color:white;font-size:16px;margin-right:8px}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07101f">
+  <title>Ossper Markets</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #07101f;
+      color: #f2f6ff;
+    }
+    main { max-width: 900px; margin: 0 auto; padding: 70px 24px; }
+    .eyebrow { color: #91a1ba; font-size: 20px; letter-spacing: .02em; }
+    h1 { font-size: 64px; line-height: 1; margin: 16px 0 40px; }
+    .sub { color: #91a1ba; font-size: 24px; margin-bottom: 42px; }
+    .card {
+      background: #101c2e;
+      border: 1px solid #263b59;
+      border-radius: 28px;
+      padding: 42px;
+      margin-bottom: 38px;
+    }
+    .label { color: #91a1ba; font-size: 24px; }
+    .balance { font-size: 62px; font-weight: 750; margin: 20px 0 42px; }
+    .buttons { display: flex; gap: 22px; flex-wrap: wrap; }
+    button {
+      appearance: none;
+      border: 1px solid #456184;
+      background: #1a2d49;
+      color: #f2f6ff;
+      border-radius: 18px;
+      padding: 22px 30px;
+      font-size: 23px;
+      cursor: pointer;
+    }
+    button:active { transform: translateY(1px); }
+    .status-title { font-size: 28px; font-weight: 700; }
+    .status { color: #91a1ba; font-size: 23px; margin-top: 18px; }
+    .ok { color: #8ee6b0; }
+    .error { color: #ff9a9a; }
+    @media (max-width: 600px) {
+      main { padding: 55px 20px; }
+      h1 { font-size: 48px; }
+      .sub { font-size: 20px; }
+      .card { padding: 30px; border-radius: 24px; }
+      .balance { font-size: 50px; }
+      button { width: 100%; }
+    }
+  </style>
 </head>
 <body>
-<main>
-  <div class="muted">COMMUNITY PREDICTION MARKET</div>
-  <h1>Ossper Markets</h1>
-  <p class="muted">Live deployment test — virtual money only.</p>
-  <div class="card">
-    <div class="muted">Available balance</div>
-    <div class="balance" id="balance">$500.00</div>
-    <button id="add">Test +$10</button>
-    <button id="buy">Test Buy YES ($6.40)</button>
-  </div>
-  <div class="card">
-    <b>Deployment status</b>
-    <p id="status" class="muted">Checking backend…</p>
-  </div>
-</main>
-<script>
-let balance=500;
-const money=n=>"$"+n.toFixed(2);
-document.getElementById("add").onclick=()=>{balance+=10;render()};
-document.getElementById("buy").onclick=()=>{
-  if(balance>=6.4){balance-=6.4;render()}
-  else alert("Insufficient virtual balance");
-};
-function render(){document.getElementById("balance").textContent=money(balance)}
-fetch("/api/health").then(r=>r.json()).then(d=>{
- document.getElementById("status").textContent="Backend connected ✓";
-}).catch(()=>document.getElementById("status").textContent="Backend unavailable");
-</script>
+  <main>
+    <div class="eyebrow">COMMUNITY PREDICTION MARKET</div>
+    <h1>Ossper Markets</h1>
+    <div class="sub">Live deployment test — virtual money only.</div>
+
+    <section class="card">
+      <div class="label">Available balance</div>
+      <div id="balance" class="balance">$500.00</div>
+      <div class="buttons">
+        <button id="addMoney" type="button">Test +$10</button>
+        <button id="buyYes" type="button">Test Buy YES ($6.40)</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="status-title">Deployment status</div>
+      <div id="status" class="status">Checking backend…</div>
+    </section>
+  </main>
+
+  <script src="/app.js" defer></script>
 </body>
 </html>
