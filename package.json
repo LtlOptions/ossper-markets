@@ -1,8 +1,8 @@
 {
   "name": "ossper-markets",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
-  "description": "Ossper Markets — community prediction market",
+  "description": "Ossper Markets \u2014 community prediction market",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

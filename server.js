@@ -153,6 +153,29 @@ async function initDb() {
       details JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS ledger_entries (
+      id BIGSERIAL PRIMARY KEY,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      entry_type TEXT NOT NULL,
+      amount NUMERIC(18,4) NOT NULL,
+      balance_before NUMERIC(18,4) NOT NULL,
+      balance_after NUMERIC(18,4) NOT NULL,
+      market_id INTEGER REFERENCES markets(id) ON DELETE SET NULL,
+      trade_id BIGINT REFERENCES trades(id) ON DELETE SET NULL,
+      reference TEXT,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS system_controls (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      frozen BOOLEAN NOT NULL DEFAULT FALSE,
+      reason TEXT NOT NULL DEFAULT '',
+      changed_by TEXT NOT NULL DEFAULT 'system',
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    INSERT INTO system_controls (id, frozen) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;
   `);
 
   // Safe migrations for databases created by v0.6.1.
@@ -186,7 +209,26 @@ async function ensureAccount(accountId) {
   );
 }
 
+async function getSystemControl() {
+  const q = await pool.query("SELECT * FROM system_controls WHERE id=1");
+  return q.rows[0] || { frozen: false, reason: '', changed_by: 'system', changed_at: null };
+}
+
+async function assertSystemActive() {
+  const control = await getSystemControl();
+  if (control.frozen) throw new Error(`Ossper is frozen by administration${control.reason ? `: ${control.reason}` : '.'}`);
+  return control;
+}
+
+async function addLedgerEntry(client, { accountId, entryType, amount, balanceBefore, balanceAfter, marketId = null, tradeId = null, reference = null, details = {} }) {
+  await client.query(`
+    INSERT INTO ledger_entries (account_id, entry_type, amount, balance_before, balance_after, market_id, trade_id, reference, details)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+  `, [accountId, entryType, amount, balanceBefore, balanceAfter, marketId, tradeId, reference, JSON.stringify(details)]);
+}
+
 async function marketSnapshot(marketId, accountId) {
+  await ensureAccount(accountId);
   const marketQ = await pool.query(`
     SELECT m.*,
       mt.event_name, mt.event_day, mt.format, mt.side_a_name, mt.side_b_name,
@@ -214,6 +256,7 @@ async function marketSnapshot(marketId, accountId) {
   );
 
   const account = await getAccount(accountId);
+  if (!account) return null;
   const yes = Number(market.yes_price);
   return {
     market: {
@@ -304,6 +347,8 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const controlQ = await client.query("SELECT frozen, reason FROM system_controls WHERE id=1 FOR UPDATE");
+    if (controlQ.rows[0]?.frozen) throw new Error(`Ossper is frozen by administration${controlQ.rows[0].reason ? `: ${controlQ.rows[0].reason}` : '.'}`);
     const m = await client.query("SELECT * FROM markets WHERE id=$1 FOR UPDATE", [marketId]);
     if (!m.rows.length) throw new Error("Market not found.");
     const market = m.rows[0];
@@ -337,7 +382,9 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
 
       const newQty = currentQty + quantity;
       const newAvg = ((currentQty * currentAvg) + gross) / newQty;
-      await client.query("UPDATE accounts SET balance = balance - $1 WHERE id=$2", [totalDebit, accountId]);
+      const balanceBefore = Number(account.balance);
+      const balanceAfter = Number((balanceBefore - totalDebit).toFixed(4));
+      await client.query("UPDATE accounts SET balance = $1 WHERE id=$2", [balanceAfter, accountId]);
       await client.query(`
         INSERT INTO positions (account_id, market_id, side, quantity, avg_cost)
         VALUES ($1,$2,$3,$4,$5)
@@ -349,7 +396,9 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
       const netCredit = Number((gross - fee).toFixed(4));
       const newQty = currentQty - quantity;
       const realized = Number((gross - (currentAvg * quantity) - fee).toFixed(4));
-      await client.query("UPDATE accounts SET balance = balance + $1 WHERE id=$2", [netCredit, accountId]);
+      const balanceBefore = Number(account.balance);
+      const balanceAfter = Number((balanceBefore + netCredit).toFixed(4));
+      await client.query("UPDATE accounts SET balance = $1 WHERE id=$2", [balanceAfter, accountId]);
       await client.query(`
         INSERT INTO positions (account_id, market_id, side, quantity, avg_cost, realized_pnl)
         VALUES ($1,$2,$3,$4,$5,$6)
@@ -361,10 +410,23 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
     const nextYes = quote.yesPriceAfter;
     await client.query("UPDATE markets SET yes_price=$1, updated_at=NOW() WHERE id=$2", [nextYes, marketId]);
 
-    await client.query(`
+    const tradeQ = await client.query(`
       INSERT INTO trades (account_id, market_id, side, action, quantity, price, gross, fee)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      RETURNING id
     `, [accountId, marketId, side, action, quantity, price, gross, fee]);
+
+    const ledgerAmount = action === 'BUY' ? -Number((gross + fee).toFixed(4)) : Number((gross - fee).toFixed(4));
+    const balanceBeforeForLedger = Number(account.balance);
+    const balanceAfterForLedger = action === 'BUY'
+      ? Number((balanceBeforeForLedger + ledgerAmount).toFixed(4))
+      : Number((balanceBeforeForLedger + ledgerAmount).toFixed(4));
+    await addLedgerEntry(client, {
+      accountId, entryType: action === 'BUY' ? 'TRADE_DEBIT' : 'TRADE_CREDIT',
+      amount: ledgerAmount, balanceBefore: balanceBeforeForLedger, balanceAfter: balanceAfterForLedger,
+      marketId, tradeId: tradeQ.rows[0].id, reference: `${action}_${side}`,
+      details: { side, quantity, price, gross, fee }
+    });
 
     await client.query(`
       INSERT INTO audit_logs (actor, action, market_id, details)
@@ -397,6 +459,8 @@ app.post("/api/session", async (_req, res) => {
 });
 
 async function closeExpiredMarkets() {
+  const control = await getSystemControl();
+  if (control.frozen) return;
   const q = await pool.query(`
     UPDATE markets
     SET status='CLOSED', updated_at=NOW()
@@ -435,6 +499,7 @@ app.get("/api/market/:id", async (req, res) => {
 
 app.post("/api/quote", async (req, res) => {
   try {
+    await assertSystemActive();
     const marketId = Number(req.body?.marketId);
     const side = String(req.body?.side || "").toUpperCase();
     const action = String(req.body?.action || "BUY").toUpperCase();
@@ -453,6 +518,7 @@ app.post("/api/quote", async (req, res) => {
 
 app.post("/api/trade", async (req, res) => {
   try {
+    await assertSystemActive();
     const accountId = req.header("x-account-id");
     if (!accountId) return res.status(400).json({ error: "Missing account." });
     await ensureAccount(accountId);
@@ -469,6 +535,11 @@ app.post("/api/trade", async (req, res) => {
   }
 });
 
+app.get("/api/system", async (_req, res) => {
+  const control = await getSystemControl();
+  res.json({ frozen: Boolean(control.frozen), reason: control.reason || '', changedAt: control.changed_at });
+});
+
 app.post("/api/admin/login", (req, res) => {
   const supplied = String(req.body?.key || "");
   const a = Buffer.from(supplied);
@@ -482,6 +553,34 @@ app.post("/api/admin/login", (req, res) => {
 });
 
 app.get("/api/admin/me", adminOnly, (_req, res) => res.json({ ok: true, role: "admin" }));
+
+app.get("/api/admin/system", adminOnly, async (_req, res) => {
+  const control = await getSystemControl();
+  res.json({ frozen: Boolean(control.frozen), reason: control.reason || '', changedBy: control.changed_by, changedAt: control.changed_at });
+});
+
+app.post("/api/admin/system/freeze", adminOnly, async (req, res) => {
+  const frozen = Boolean(req.body?.frozen);
+  const reason = String(req.body?.reason || '').trim().slice(0, 500);
+  const actor = 'admin';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentQ = await client.query("SELECT * FROM system_controls WHERE id=1 FOR UPDATE");
+    const previous = currentQ.rows[0] || { frozen: false, reason: '' };
+    await client.query("UPDATE system_controls SET frozen=$1, reason=$2, changed_by=$3, changed_at=NOW() WHERE id=1", [frozen, reason, actor]);
+    await client.query(`INSERT INTO audit_logs (actor, action, details) VALUES ($1,$2,$3)`, [actor, frozen ? 'GLOBAL_FREEZE_ENABLED' : 'GLOBAL_FREEZE_DISABLED', JSON.stringify({ reason, previousFrozen: Boolean(previous.frozen), previousReason: previous.reason || '' })]);
+    await client.query('COMMIT');
+    res.json({ ok: true, frozen, reason });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+
 
 app.get("/api/admin/markets", adminOnly, async (_req, res) => {
   await closeExpiredMarkets();
@@ -499,6 +598,7 @@ app.get("/api/admin/markets", adminOnly, async (_req, res) => {
 });
 
 app.post("/api/admin/matches", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const {
     eventName = "Ossper Weekly",
     eventDay,
@@ -557,6 +657,7 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/matches/:id/publish", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const id = Number(req.params.id);
   const client = await pool.connect();
   try {
@@ -583,6 +684,7 @@ app.post("/api/admin/matches/:id/publish", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/matches/:id/cancel", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const id = Number(req.params.id);
   const client = await pool.connect();
   try {
@@ -606,6 +708,7 @@ app.post("/api/admin/matches/:id/cancel", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/markets", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const { question, description = "", yesPrice = 0.50, closeAt = null, liquidity = 100 } = req.body || {};
   if (!question || String(question).trim().length < 5) return res.status(400).json({ error: "Question is required." });
   const price = Number(yesPrice);
@@ -627,6 +730,7 @@ app.post("/api/admin/markets", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const allowed = ["DRAFT","OPEN","TRADING","CLOSED","AWAITING_RESULT","RESOLVED","SETTLED","VOID"];
   const status = String(req.body?.status || "").toUpperCase();
   if (!allowed.includes(status)) return res.status(400).json({ error: "Invalid status." });
@@ -648,6 +752,7 @@ app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const result = String(req.body?.result || "").toUpperCase();
   if (!["YES","NO","VOID"].includes(result)) return res.status(400).json({ error: "Result must be YES, NO, or VOID." });
 
@@ -675,7 +780,22 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
       else payout = Number(p.quantity) * Number(p.avg_cost);
 
       if (payout > 0) {
-        await client.query("UPDATE accounts SET balance=balance+$1 WHERE id=$2", [payout, p.account_id]);
+        const acctQ = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [p.account_id]);
+        const balanceBefore = Number(acctQ.rows[0].balance);
+        const balanceAfter = Number((balanceBefore + payout).toFixed(4));
+        await client.query("UPDATE accounts SET balance=$1 WHERE id=$2", [balanceAfter, p.account_id]);
+        await addLedgerEntry(client, {
+          accountId: p.account_id, entryType: result === 'VOID' ? 'VOID_RETURN' : 'SETTLEMENT',
+          amount: Number(payout.toFixed(4)), balanceBefore, balanceAfter, marketId: id,
+          reference: `SETTLE_${result}`, details: { side: p.side, quantity: Number(p.quantity), result }
+        });
+      } else {
+        const acctQ = await client.query("SELECT balance FROM accounts WHERE id=$1", [p.account_id]);
+        const balance = Number(acctQ.rows[0]?.balance || 0);
+        await addLedgerEntry(client, {
+          accountId: p.account_id, entryType: 'SETTLEMENT_LOSS', amount: 0, balanceBefore: balance, balanceAfter: balance, marketId: id,
+          reference: `SETTLE_${result}`, details: { side: p.side, quantity: Number(p.quantity), result }
+        });
       }
       await client.query(
         "UPDATE positions SET quantity=0, avg_cost=0 WHERE account_id=$1 AND market_id=$2 AND side=$3",
