@@ -6,74 +6,84 @@
   <meta name="theme-color" content="#07101f">
   <title>Ossper Markets</title>
   <style>
-    :root { color-scheme: dark; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #07101f;
-      color: #f2f6ff;
-    }
-    main { max-width: 900px; margin: 0 auto; padding: 70px 24px; }
-    .eyebrow { color: #91a1ba; font-size: 20px; letter-spacing: .02em; }
-    h1 { font-size: 64px; line-height: 1; margin: 16px 0 40px; }
-    .sub { color: #91a1ba; font-size: 24px; margin-bottom: 42px; }
-    .card {
-      background: #101c2e;
-      border: 1px solid #263b59;
-      border-radius: 28px;
-      padding: 42px;
-      margin-bottom: 38px;
-    }
-    .label { color: #91a1ba; font-size: 24px; }
-    .balance { font-size: 62px; font-weight: 750; margin: 20px 0 42px; }
-    .buttons { display: flex; gap: 22px; flex-wrap: wrap; }
-    button {
-      appearance: none;
-      border: 1px solid #456184;
-      background: #1a2d49;
-      color: #f2f6ff;
-      border-radius: 18px;
-      padding: 22px 30px;
-      font-size: 23px;
-      cursor: pointer;
-    }
-    button:active { transform: translateY(1px); }
-    .status-title { font-size: 28px; font-weight: 700; }
-    .status { color: #91a1ba; font-size: 23px; margin-top: 18px; }
-    .ok { color: #8ee6b0; }
-    .error { color: #ff9a9a; }
-    @media (max-width: 600px) {
-      main { padding: 55px 20px; }
-      h1 { font-size: 48px; }
-      .sub { font-size: 20px; }
-      .card { padding: 30px; border-radius: 24px; }
-      .balance { font-size: 50px; }
-      button { width: 100%; }
-    }
+    :root { color-scheme: dark; --bg:#07101f; --panel:#101c2e; --line:#263b59; --muted:#91a1ba; --text:#f2f6ff; --accent:#7ea6ff; --good:#8ee6b0; --bad:#ff9a9a; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    header { position:sticky; top:0; z-index:5; background:rgba(7,16,31,.94); backdrop-filter:blur(18px); border-bottom:1px solid var(--line); }
+    .nav { max-width:1180px; margin:auto; padding:18px 22px; display:flex; align-items:center; justify-content:space-between; gap:18px; }
+    .brand { font-size:22px; font-weight:800; letter-spacing:.02em; }
+    .navlinks { display:flex; gap:20px; color:var(--muted); font-size:14px; }
+    main { max-width:1180px; margin:auto; padding:38px 22px 80px; }
+    .eyebrow { color:var(--accent); font-size:13px; font-weight:700; letter-spacing:.12em; }
+    h1 { font-size:42px; margin:8px 0 8px; }
+    .subtitle { color:var(--muted); margin:0 0 30px; }
+    .grid { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(290px,.8fr); gap:22px; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:22px; padding:24px; }
+    .panel h2 { margin:0 0 18px; font-size:20px; }
+    .market { border:1px solid var(--line); border-radius:18px; padding:20px; margin-bottom:16px; background:#0d1929; }
+    .market:last-child { margin-bottom:0; }
+    .market-top { display:flex; justify-content:space-between; gap:16px; }
+    .market-title { font-size:19px; font-weight:750; }
+    .tag { color:var(--good); font-size:12px; font-weight:700; }
+    .desc { color:var(--muted); margin:8px 0 18px; line-height:1.45; }
+    .prices { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .quote { border:1px solid var(--line); border-radius:15px; padding:15px; }
+    .quote.yes { border-color:#35537c; }
+    .quote.no { border-color:#493b60; }
+    .quote-label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+    .price { font-size:28px; font-weight:800; margin:5px 0 10px; }
+    button { width:100%; border:1px solid #456184; background:#1a2d49; color:var(--text); border-radius:12px; padding:12px; font-size:15px; font-weight:700; }
+    button:active { transform:translateY(1px); }
+    .sell { background:#201b2d; border-color:#4b3d65; }
+    .meta { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; margin-top:15px; }
+    .balance { font-size:38px; font-weight:850; margin:5px 0 22px; }
+    .position { border-top:1px solid var(--line); padding:14px 0; }
+    .position:first-of-type { border-top:0; }
+    .pos-row { display:flex; justify-content:space-between; gap:12px; }
+    .muted { color:var(--muted); }
+    .history-item { border-top:1px solid var(--line); padding:12px 0; font-size:13px; }
+    .history-item:first-child { border-top:0; }
+    .ok { color:var(--good); }
+    .error { color:var(--bad); }
+    #toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:#182840; border:1px solid var(--line); padding:12px 16px; border-radius:12px; display:none; z-index:10; }
+    @media(max-width:820px){ .grid{grid-template-columns:1fr;} h1{font-size:34px;} .navlinks{display:none;} }
   </style>
 </head>
 <body>
-  <main>
-    <div class="eyebrow">COMMUNITY PREDICTION MARKET</div>
-    <h1>Ossper Markets</h1>
-    <div class="sub">Live deployment test — virtual money only.</div>
+<header>
+  <div class="nav">
+    <div class="brand">OSSPER</div>
+    <div class="navlinks"><span>Markets</span><span>Portfolio</span><span>History</span></div>
+  </div>
+</header>
 
-    <section class="card">
-      <div class="label">Available balance</div>
+<main>
+  <div class="eyebrow">COMMUNITY PREDICTION MARKET</div>
+  <h1>Markets</h1>
+  <p class="subtitle">Trade virtual YES/NO contracts on community tournament outcomes.</p>
+
+  <div class="grid">
+    <section class="panel">
+      <h2>Live Markets</h2>
+      <div id="markets">Loading markets…</div>
+    </section>
+
+    <aside class="panel">
+      <div class="muted">AVAILABLE BALANCE</div>
       <div id="balance" class="balance">$500.00</div>
-      <div class="buttons">
-        <button id="addMoney" type="button">Test +$10</button>
-        <button id="buyYes" type="button">Test Buy YES ($6.40)</button>
-      </div>
-    </section>
 
-    <section class="card">
-      <div class="status-title">Deployment status</div>
-      <div id="status" class="status">Checking backend…</div>
-    </section>
-  </main>
+      <h2>Your Positions</h2>
+      <div id="positions" class="muted">No open positions yet.</div>
 
-  <script src="/app.js" defer></script>
+      <h2 style="margin-top:28px;">Recent Trades</h2>
+      <div id="history" class="muted">No trades yet.</div>
+    </aside>
+  </div>
+
+  <p id="status" class="muted" style="margin-top:22px;">Connecting to Ossper engine…</p>
+</main>
+
+<div id="toast"></div>
+<script src="/app.js" defer></script>
 </body>
 </html>

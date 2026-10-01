@@ -1,17 +1,22 @@
 # Ossper Markets
 
-Community prediction market prototype for STRAFTAT tournaments.
+Ossper Markets is a community prediction-market prototype for STRAFTAT tournaments.
 
-## Current stage
+## V1 backend milestone
 
-- Railway deployment
-- HTTPS
-- Express backend
-- Helmet security headers
-- Rate limiting
-- External frontend JavaScript
-- Virtual money only
+- Railway + PostgreSQL
+- Server-authoritative virtual balance
+- Persistent users/accounts
+- Ledger entries for balance movements
+- Markets
+- YES/NO positions
+- Trade history
+- Basic automated liquidity/price movement
+- Transactional trade execution with database row locks
+- Security headers and rate limiting
 
-The current balance is intentionally browser-side for this deployment test. It is **not** a secure trading balance yet.
+### Important
 
-Next stage: move accounts, balances, positions, trades, and the ledger to the backend/database so the server is authoritative.
+This is still **virtual-money only** and is not a real-money financial product.
+
+The demo user is temporary until Discord OAuth is added. The trading engine is an initial automated-liquidity foundation; it is not the final production market-maker/order-book implementation.
