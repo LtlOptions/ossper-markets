@@ -1,74 +1,57 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ossper Markets</title>
 <style>
-:root{--bg:#07101f;--card:#101c31;--line:#2b456d;--text:#f4f7ff;--muted:#96a7c3;--yes:#83d9a8;--no:#d39adf;--btn:#20365a}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{height:118px;border-bottom:1px solid #263a5d;display:flex;align-items:center;padding:0 42px;font-weight:800;font-size:32px}main{max-width:860px;margin:auto;padding:70px 42px}.eyebrow{color:#89aaff;letter-spacing:4px;font-weight:800}.title{font-size:62px;margin:25px 0 10px}.sub{font-size:25px;color:var(--muted);line-height:1.4}.card{background:var(--card);border:1px solid var(--line);border-radius:28px;padding:42px;margin-top:45px}.market{border:1px solid var(--line);border-radius:24px;padding:36px}.marketHead{display:flex;justify-content:space-between;gap:20px}.status{color:var(--yes);font-weight:800}.question{font-size:31px;font-weight:800}.desc{color:var(--muted);font-size:21px;line-height:1.45;margin:18px 0 30px}.prices{display:grid;grid-template-columns:1fr 1fr;gap:24px}.side{border:1px solid var(--line);border-radius:22px;padding:28px}.yes{border-color:#3f70aa}.no{border-color:#704879}.label{color:var(--muted);font-size:18px}.price{font-size:49px;font-weight:800;margin:8px 0 20px}button{width:100%;border:1px solid #4d709d;background:var(--btn);color:white;border-radius:16px;padding:18px;font-size:20px;font-weight:800;margin-top:10px}button.sell{border-color:#765487;background:#211a2e}button:disabled{opacity:.45}.meta{display:flex;justify-content:space-between;color:var(--muted);margin-top:25px;font-size:17px}.balance{font-size:62px;font-weight:800;margin:8px 0 35px}.positions div,.trade{border-bottom:1px solid #29405f;padding:17px 0}.trade{color:var(--muted)}.ok{color:#7de0a5;font-size:20px;margin-top:35px}.error{color:#ff9a9a;margin-top:15px}.qty{margin:25px 0 0}.qty input{width:100%;padding:16px;border-radius:12px;border:1px solid var(--line);background:#0b1629;color:white;font-size:20px}a{color:#9eb9ff}.small{color:var(--muted);font-size:15px;margin-top:15px}@media(max-width:650px){main{padding:45px 20px}.title{font-size:48px}.prices{gap:12px}.side{padding:20px}.price{font-size:39px}header{padding:0 22px}}
+:root{--bg:#07101d;--panel:#0b1626;--panel2:#0e1b2e;--line:#243a57;--line2:#314b6f;--text:#edf3fb;--muted:#8ea0b9;--soft:#b7c3d4;--blue:#77a9ff;--green:#69d79b;--pink:#d78be8;--danger:#f0788a;--shadow:0 20px 55px rgba(0,0,0,.25)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 50% -10%,#122743 0,#07101d 42%,#050b13 100%);color:var(--text);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;letter-spacing:.01em}button,input,select{font:inherit}a{color:inherit;text-decoration:none}
+.topbar{position:sticky;top:0;z-index:20;background:rgba(5,11,19,.88);backdrop-filter:blur(18px);border-bottom:1px solid rgba(62,88,119,.45)}.nav{max-width:1180px;margin:auto;padding:15px 22px;display:flex;align-items:center;gap:24px}.brand{font-weight:800;letter-spacing:.18em;font-size:14px}.navlinks{display:flex;gap:5px;align-items:center}.navlinks a,.dropbtn{color:var(--muted);padding:9px 12px;border-radius:8px;font-size:14px;background:transparent;border:0;cursor:pointer}.navlinks a:hover,.dropbtn:hover{color:var(--text);background:#101f33}.navright{margin-left:auto;display:flex;align-items:center;gap:10px}.balanceMini{font-size:13px;color:var(--muted);border-left:1px solid var(--line);padding-left:18px}.balanceMini b{color:var(--text);font-weight:700}.dropdown{position:relative}.dropdown details{position:relative}.dropdown summary{list-style:none}.dropdown summary::-webkit-details-marker{display:none}.menu{position:absolute;right:0;top:42px;width:180px;background:#0b1626;border:1px solid var(--line2);box-shadow:var(--shadow);border-radius:10px;padding:6px}.menu a{display:block;padding:10px 12px;color:var(--soft);font-size:13px;border-radius:6px}.menu a:hover{background:#12233a;color:var(--text)}
+main{max-width:1180px;margin:auto;padding:45px 22px 90px}.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:30px;margin-bottom:30px}.eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#6f87a7;font-weight:700}.hero h1{font-size:42px;line-height:1.05;margin:10px 0 10px;letter-spacing:-.035em}.hero p{margin:0;color:var(--muted);font-size:15px;max-width:650px}.portfolio{display:grid;grid-template-columns:1.1fr .9fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:36px}.metric{background:rgba(11,22,38,.92);padding:20px 22px}.metric .label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#70839e}.metric .value{font-size:27px;font-weight:750;margin-top:7px}.metric .sub{font-size:12px;color:var(--muted);margin-top:4px}
+.sectionhead{display:flex;align-items:center;justify-content:space-between;margin:30px 0 14px}.sectionhead h2{font-size:18px;margin:0;letter-spacing:-.01em}.filter{background:#0b1626;color:var(--soft);border:1px solid var(--line);border-radius:8px;padding:9px 12px;outline:none}.markets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.market{background:linear-gradient(180deg,rgba(13,27,46,.96),rgba(8,18,31,.96));border:1px solid var(--line);border-radius:13px;padding:22px;box-shadow:0 12px 34px rgba(0,0,0,.12)}.market:hover{border-color:#3a567b}.marketTop{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.status{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--green);border:1px solid rgba(105,215,155,.35);padding:5px 7px;border-radius:999px;white-space:nowrap}.market h3{font-size:21px;line-height:1.25;margin:0 0 8px;letter-spacing:-.025em}.meta{color:var(--muted);font-size:12px;line-height:1.6}.questionSub{color:#b4c1d2;font-size:13px;margin:8px 0 18px}.sides{display:grid;grid-template-columns:1fr 1fr;gap:10px}.side{border:1px solid var(--line2);border-radius:10px;padding:16px;background:#0a1525}.side.no{border-color:#553c5c}.sideLabel{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.priceRow{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:7px 0 11px}.price{font-size:29px;font-weight:800;letter-spacing:-.04em}.move{font-size:11px;color:var(--muted)}.move.up{color:var(--green)}.move.down{color:var(--danger)}.side button{width:100%;border:1px solid #38567e;background:#122846;color:#eaf2ff;padding:10px 12px;border-radius:7px;font-weight:700;cursor:pointer}.side button:hover{background:#183454;border-color:#5275a5}.side button.sell{margin-top:7px;background:#20152b;border-color:#63466d;color:#e3b6ec}.owned{font-size:11px;color:var(--muted);margin-top:10px}.marketFoot{display:flex;justify-content:space-between;gap:12px;margin-top:15px;padding-top:13px;border-top:1px solid #1b2d45;color:var(--muted);font-size:11px}.marketFoot b{color:#c6d2e1;font-weight:650}.activity{border:1px solid var(--line);border-radius:12px;overflow:hidden}.activityRow{display:grid;grid-template-columns:1fr auto auto auto;gap:16px;padding:12px 15px;border-top:1px solid #182a41;color:var(--soft);font-size:12px}.activityRow:first-child{border-top:0}.empty{padding:24px;color:var(--muted);border:1px dashed var(--line);border-radius:10px;text-align:center}.settings{border:1px solid var(--line);border-radius:12px;padding:20px;background:#0b1626;color:var(--muted);font-size:13px}.error{color:#ff9aa8;border:1px solid #5e2d39;background:#24141a;border-radius:10px;padding:14px}.ok{color:var(--green);font-size:12px}
+.modalBack{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}.modal{width:min(430px,100%);background:#0b1626;border:1px solid var(--line2);border-radius:13px;box-shadow:var(--shadow);padding:22px}.modal h3{margin:0 0 5px}.modal p{margin:0 0 16px;color:var(--muted);font-size:13px}.modal input{width:100%;background:#07101d;border:1px solid var(--line2);color:white;padding:12px;border-radius:8px;outline:none}.quote{background:#081321;border:1px solid #1e324b;border-radius:9px;padding:12px;margin:13px 0;font-size:12px;color:var(--soft);line-height:1.7}.quote b{color:var(--text)}.modalActions{display:flex;justify-content:flex-end;gap:8px}.modalActions button{border:1px solid var(--line2);background:#132741;color:white;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}.modalActions .primary{background:#3c65a0;border-color:#527cb9}
+@media(max-width:850px){.nav{padding:12px 15px}.navlinks{display:none}.balanceMini{border:0;padding-left:0}.hero{display:block}.hero h1{font-size:35px}.portfolio{grid-template-columns:1fr 1fr}.markets{grid-template-columns:1fr}.activityRow{grid-template-columns:1fr auto}.activityRow>*:nth-child(n+3){display:none}main{padding:32px 15px 70px}}
+@media(max-width:520px){.portfolio{grid-template-columns:1fr}.sides{grid-template-columns:1fr 1fr}.market{padding:17px}.price{font-size:25px}.hero h1{font-size:31px}}
 </style>
 </head>
 <body>
-<header>OSSPER</header>
-<main>
-<div class="eyebrow">COMMUNITY PREDICTION MARKET</div>
-<div class="title">Markets</div>
-<div class="sub">Trade virtual YES/NO contracts on community tournament outcomes.</div>
-<div id="app"></div>
-</main>
-<script>
-const KEY="ossper_account_id";
-let accountId=localStorage.getItem(KEY);
-async function api(url, opts={}) {
-  opts.headers={...(opts.headers||{}), "Content-Type":"application/json"};
-  if(accountId) opts.headers["x-account-id"]=accountId;
-  const r=await fetch(url,opts); const data=await r.json();
-  if(!r.ok) throw new Error(data.error||"Request failed");
-  return data;
-}
-async function boot(){
-  if(!accountId){ const s=await api("/api/session",{method:"POST",body:"{}"}); accountId=s.accountId; localStorage.setItem(KEY,accountId); }
-  render(await api("/api/markets"));
-}
-function money(n){return "$"+Number(n).toFixed(2)}
-function esc(v){return String(v??"").replace(/[&<>\"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
-function render(snaps){
-  if(!snaps.length){document.getElementById("app").innerHTML="<div class=card>No markets yet.</div>";return;}
-  const cards=snaps.map(s=>marketCard(s)).join("");
-  document.getElementById("app").innerHTML=cards;
-}
-function marketCard(s){
-  const m=s.market,a=s.account,yes=Number(m.yes_price),no=Number(m.no_price);
-  const pos=Object.fromEntries(a.positions.map(p=>[p.side,p]));
-  return `<section class="card"><div class="market">
-    <div class="marketHead"><div class="question">${esc(m.question)}</div><div class="status">${m.status}</div></div>
-    ${m.event_name?`<div class="small">${esc(m.event_name)} · ${esc(m.event_day)} · ${esc(m.format)}${m.scheduled_at?` · ${new Date(m.scheduled_at).toLocaleString()}`:""}</div>`:""}
-    <div class="desc">${m.event_name?`<b>${esc(m.event_day)} · ${esc(m.format)}</b><br>`:""}${esc(m.description)}</div>
-    <div class="prices">
-      ${sideBox(m.id,"YES",yes,pos.YES,m.side_a_name||"YES")}
-      ${sideBox(m.id,"NO",no,pos.NO,m.side_b_name||"NO")}
-    </div>
-    <div class="meta"><span>Volume ${money(m.volume)}</span><span>YES + NO = $1.00</span></div>
+<header class="topbar"><nav class="nav">
+  <a class="brand" href="#markets">OSSPER</a>
+  <div class="navlinks">
+    <a href="#markets">Markets</a><a href="#tournaments">Tournaments</a><a href="#activity">Activity</a><a href="#portfolio">Portfolio</a>
+    <div class="dropdown"><details><summary class="dropbtn">Settings ▾</summary><div class="menu"><a href="#settings">Preferences</a><a href="/admin">Admin</a><a href="#about">About Ossper</a></div></details></div>
   </div>
-  <section class="card">
-    <div class="label">AVAILABLE BALANCE</div><div class="balance">${money(a.balance)}</div>
-    <div class="label">YOUR POSITIONS</div><div class="positions">${a.positions.length?a.positions.map(p=>`<div><b>${p.side} ${p.quantity}</b> · Avg ${money(p.avg_cost)}</div>`).join(""):"No open positions."}</div>
-    <h2>Recent Trades</h2>${a.trades.length?a.trades.map(t=>`<div class=trade><b>${t.action} ${t.quantity} ${t.side}</b> @ ${money(t.price)} · ${money(t.gross)} · fee ${money(t.fee)}</div>`).join(""):"<div class=trade>No trades yet.</div>"}
-    <div class="ok">Ossper engine connected ✓ · database-backed virtual balance</div>
-  </section></section>`;
-}
-function sideBox(marketId,side,price,p,label){
- return `<div class="side ${side==="YES"?"yes":"no"}"><div class=label>${side} · ${esc(label)}</div><div class=price>${money(price)}</div>
- <button onclick="trade(${marketId},'${side}','BUY')">Buy ${side}</button>
- ${p&&p.quantity>0?`<button class=sell onclick="trade(${marketId},'${side}','SELL')">Sell ${side}</button>`:""}
- ${p&&p.quantity>0?`<div class=small>Own ${p.quantity} · Avg ${money(p.avg_cost)}</div>`:""}
- </div>`;
-}
-async function trade(marketId,side,action){
- const qty=prompt(`How many ${side} contracts?`,"1"); if(qty===null)return;
- try{ await api("/api/trade",{method:"POST",body:JSON.stringify({marketId,action,side,quantity:Number(qty)})}); await boot(); }
- catch(e){alert(e.message);}
-}
-boot().catch(e=>document.getElementById("app").innerHTML=`<div class=card><div class=error>${e.message}</div></div>`);
+  <div class="navright"><div class="balanceMini">Balance <b id="miniBalance">$500.00</b></div></div>
+</nav></header>
+<main>
+  <section class="hero" id="about"><div><div class="eyebrow">Community prediction market</div><h1>Trade the outcome.</h1><p>Virtual YES/NO contracts for Ossper tournament matches. Clean markets, live pricing, and a simple portfolio.</p></div></section>
+
+  <section class="portfolio" id="portfolio">
+    <div class="metric"><div class="label">Available balance</div><div class="value" id="balance">$500.00</div><div class="sub">Virtual money</div></div>
+    <div class="metric"><div class="label">Open position value</div><div class="value" id="positionValue">$0.00</div><div class="sub" id="positionCount">No open positions</div></div>
+  </section>
+
+  <section id="markets"><div class="sectionhead"><h2>Markets</h2><select id="filter" class="filter"><option value="ALL">All tournaments</option><option value="FRIDAY">Friday</option><option value="SATURDAY">Saturday</option><option value="SUNDAY">Sunday</option></select></div><div id="marketsGrid" class="markets"></div></section>
+  <section id="tournaments"><div class="sectionhead"><h2>Tournament calendar</h2></div><div id="tournamentList" class="markets"></div></section>
+  <section id="activity"><div class="sectionhead"><h2>Recent activity</h2></div><div id="activityList" class="activity"></div></section>
+  <section id="settings"><div class="sectionhead"><h2>Settings</h2></div><div class="settings">Ossper is currently running in virtual-money mode. Account identity is device-based for this test build. Discord login will replace this before public launch.</div></section>
+</main>
+<div id="modalBack" class="modalBack"><div class="modal"><h3 id="modalTitle">Buy YES</h3><p id="modalSub">Enter a contract quantity.</p><input id="qty" type="number" min="1" max="10000" step="1" value="10"><div id="quote" class="quote">Enter a quantity to preview the trade.</div><div class="modalActions"><button onclick="closeModal()">Cancel</button><button class="primary" id="confirmBtn" onclick="confirmTrade()">Confirm</button></div></div></div>
+<script>
+const KEY="ossper_account_id";let accountId=localStorage.getItem(KEY);let state=[];let pending=null;
+async function api(url,opts={}){opts.headers={...(opts.headers||{}),"Content-Type":"application/json"};if(accountId)opts.headers["x-account-id"]=accountId;const r=await fetch(url,opts);const d=await r.json();if(!r.ok)throw Error(d.error||"Request failed");return d}
+function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+function money(v){return "$"+Number(v||0).toFixed(2)}
+function prob(v){return "$"+Number(v||0).toFixed(3)}
+function signed(v){return (v>=0?"+":"")+Number(v).toFixed(3)}
+function posFor(m,side){return m.account.positions.find(p=>p.side===side)||null}
+function card(s){const m=s.market;const yes=Number(m.yes_price),no=Number(m.no_price);const yMove=yes-Number(m.opening_yes_price||yes);const nMove=-yMove;const day=m.event_day?m.event_day:"MARKET";return `<article class="market"><div class="marketTop"><div><h3>${esc(m.question)}</h3><div class="meta">${esc(m.event_name||"Ossper Market")} · ${esc(day)}${m.format?" · "+esc(m.format):""}${m.scheduled_at?" · "+esc(new Date(m.scheduled_at).toLocaleString()):""}</div></div><span class="status">${esc(m.status)}</span></div><div class="questionSub">${esc(m.description||"")}</div><div class="sides">${sideBox(m,"YES",yes,yMove,m.side_a_name||"YES")} ${sideBox(m,"NO",no,nMove,m.side_b_name||"NO")}</div><div class="marketFoot"><span>Volume <b>${money(m.volume)}</b></span><span>Depth <b>${money(m.liquidity)}</b></span><span>YES + NO <b>$1.000</b></span></div></article>`}
+function sideBox(s,side,price,move,label){const p=posFor(s,side);const moveClass=move>0.0001?"up":move<-0.0001?"down":"";return `<div class="side ${side.toLowerCase()}"><div class="sideLabel">${side} · ${esc(label)}</div><div class="priceRow"><div class="price">${prob(price)}</div><div class="move ${moveClass}">${moveClass?((move>0?"↑ ":"↓ ")+Math.abs(move*100).toFixed(1)+"¢"):"—"}</div></div><button onclick="openTrade(${s.market.id},'${side}','BUY')">Buy ${side}</button>${p&&p.quantity>0?`<button class="sell" onclick="openTrade(${s.market.id},'${side}','SELL')">Sell ${side}</button><div class="owned">Own ${p.quantity} · Avg ${prob(p.avg_cost)}</div>`:""}</div>`}
+function render(){const filter=document.getElementById("filter").value;const filtered=state.filter(s=>filter==="ALL"||s.market.event_day===filter);document.getElementById("marketsGrid").innerHTML=filtered.map(card).join("")||`<div class="empty">No markets in this filter.</div>`;const events={};state.forEach(s=>{const m=s.market;const key=(m.event_name||"Ossper");events[key]??={name:key,days:new Set(),count:0};if(m.event_day)events[key].days.add(m.event_day);events[key].count++});document.getElementById("tournamentList").innerHTML=Object.values(events).map(e=>`<article class="market"><h3>${esc(e.name)}</h3><div class="meta">${[...e.days].join(" · ")} · ${e.count} market${e.count===1?"":"s"}</div></article>`).join("")||`<div class="empty">No tournament markets yet.</div>`;const allTrades=[];state.forEach(s=>s.account.trades.forEach(t=>allTrades.push({...t,question:s.market.question})));allTrades.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));document.getElementById("activityList").innerHTML=allTrades.slice(0,20).map(t=>`<div class="activityRow"><span><b>${esc(t.action)} ${t.quantity} ${esc(t.side)}</b> · ${esc(t.question)}</span><span>${prob(t.price)}</span><span>${money(t.gross)}</span><span>${new Date(t.created_at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</span></div>`).join("")||`<div class="empty">No trades yet.</div>`;let value=0,count=0;state.forEach(s=>s.account.positions.forEach(p=>{count+=p.quantity;value+=p.quantity*(p.side==="YES"?s.market.yes_price:s.market.no_price)}));const balance=state[0]?.account.balance||500;document.getElementById("balance").textContent=money(balance);document.getElementById("miniBalance").textContent=money(balance);document.getElementById("positionValue").textContent=money(value);document.getElementById("positionCount").textContent=count?`${count} contracts across ${state.filter(s=>s.account.positions.length).length} market${state.filter(s=>s.account.positions.length).length===1?"":"s"}`:"No open positions"}
+async function boot(){if(!accountId){const s=await api("/api/session",{method:"POST",body:"{}"});accountId=s.accountId;localStorage.setItem(KEY,accountId)}state=await api("/api/markets");render()}
+function openTrade(marketId,side,action){pending={marketId,side,action};document.getElementById("qty").value=10;const m=state.find(x=>x.market.id===marketId).market;document.getElementById("modalTitle").textContent=`${action==='BUY'?"Buy":"Sell"} ${side}`;document.getElementById("modalSub").textContent=`${m.question} · market depth ${money(m.liquidity)}`;document.getElementById("modalBack").style.display="flex";updateQuote()}
+async function updateQuote(){if(!pending)return;const qty=Math.floor(Number(document.getElementById("qty").value));if(!qty||qty<1){document.getElementById("quote").textContent="Enter a whole-number quantity.";return}try{const q=await api("/api/quote",{method:"POST",body:JSON.stringify({...pending,quantity:qty})});document.getElementById("quote").innerHTML=`Start <b>${prob(q.startPrice)}</b> · Avg <b>${prob(q.averagePrice)}</b> · End <b>${prob(q.endPrice)}</b><br>${pending.action==='BUY'?"Estimated debit":"Estimated credit"}: <b>${money(pending.action==='BUY'?q.total:q.gross-q.fee)}</b> · Fee <b>${money(q.fee)}</b><br>Price move: <b>${q.priceMove>=0?"+":""}${(q.priceMove*100).toFixed(2)}¢</b>`}catch(e){document.getElementById("quote").textContent=e.message}}
+document.getElementById("qty").addEventListener("input",updateQuote);function closeModal(){pending=null;document.getElementById("modalBack").style.display="none"}async function confirmTrade(){if(!pending)return;const qty=Math.floor(Number(document.getElementById("qty").value));try{await api("/api/trade",{method:"POST",body:JSON.stringify({...pending,quantity:qty})});closeModal();state=await api("/api/markets");render()}catch(e){alert(e.message)}}document.getElementById("filter").addEventListener("change",render);boot().catch(e=>document.querySelector("main").innerHTML=`<div class="error">${esc(e.message)}</div>`);
 </script>
 </body></html>

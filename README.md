@@ -1,30 +1,26 @@
-# Ossper Markets v0.7
+# Ossper Markets v0.8
 
-Virtual-money community prediction market for Ossper tournament outcomes.
+Ossper Markets is a virtual-money community prediction market for tournament outcomes.
 
-## v0.7 — Tournament match markets
-- Admin can create Friday 1v1, Saturday 2v2, and Sunday 1v1 match markets.
-- Each match stores event name, day, format, side A, side B, scheduled time, and trading close time.
-- New match markets start as private DRAFTs and can be published from the admin panel.
-- Public users see published markets with player/team names on the YES/NO sides.
-- Trading close time is enforced server-side; expired markets are closed automatically when the market API is read or a trade is attempted.
-- Admin can publish, close, await result, resolve, and settle match markets.
-- Draft matches can be cancelled before publication.
-- Existing v0.6 standalone/demo markets remain supported.
-- Audit logs record match creation, publication, status changes, and settlement actions.
+## v0.8 changes
+- Sleek responsive market UI with one global portfolio/balance section.
+- Navigation for Markets, Tournaments, Activity, Portfolio, Settings, and Admin.
+- 3-decimal contract prices and price-movement indicators.
+- Per-market configurable opening YES probability.
+- Per-market configurable virtual liquidity / market depth.
+- Liquidity-aware pricing: larger depth requires more traded dollars to move probability.
+- Server-side quote endpoint with estimated average execution price, fee, and price movement.
+- Trade modal replaces browser prompts and previews estimated debit/credit.
+- Existing v0.7 database is migrated in place; no database reset required.
 
-## Existing engine
-- PostgreSQL-backed accounts, positions, trades, markets, matches, and audit logs.
-- Server-authoritative virtual balance.
-- Buy/sell with a 1% fee.
-- Simple automated price impact while preserving YES + NO = $1.00.
-- Winning contracts settle at $1; losing contracts at $0.
-- Temporary admin-key authentication. Discord OAuth should replace this before public launch.
+## Market depth
+Liquidity is an approximate virtual market-depth control. A $50-depth market will move more from a $10 trade than a $1,000-depth market. Opening probability and depth are independent.
+
+## Safety
+Virtual money only. This build is not real-money ready and should not be used to accept wagers or payments. Discord authentication, stronger account security, player restrictions, surveillance controls, and legal/regulatory review are still required before any public or real-money use.
 
 ## Railway variables
-Required:
-- `DATABASE_URL` — provided by Railway Postgres.
-- `OSSPER_ADMIN_KEY` — choose a long random secret. Never put it in GitHub and never send it in chat.
+- `DATABASE_URL`
+- `OSSPER_ADMIN_KEY`
 
-## Important
-This is not a real-money system and is not legal/regulatory ready. Do not connect payments or real money without a separate security/legal review.
+Start with `npm start`.

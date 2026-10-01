@@ -100,6 +100,8 @@ async function initDb() {
       question TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       yes_price NUMERIC(10,4) NOT NULL DEFAULT 0.50,
+      opening_yes_price NUMERIC(10,4) NOT NULL DEFAULT 0.50,
+      liquidity NUMERIC(18,4) NOT NULL DEFAULT 100.00,
       status TEXT NOT NULL DEFAULT 'DRAFT',
       close_at TIMESTAMPTZ,
       result TEXT,
@@ -155,6 +157,10 @@ async function initDb() {
 
   // Safe migrations for databases created by v0.6.1.
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS match_id INTEGER REFERENCES matches(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS opening_yes_price NUMERIC(10,4) NOT NULL DEFAULT 0.50`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS liquidity NUMERIC(18,4) NOT NULL DEFAULT 100.00`);
+  await pool.query(`UPDATE markets SET opening_yes_price=yes_price WHERE opening_yes_price IS NULL OR opening_yes_price=0`);
+  await pool.query(`UPDATE markets SET liquidity=100.00 WHERE liquidity IS NULL OR liquidity<=0`);
 
   const { rows } = await pool.query("SELECT id FROM markets ORDER BY id LIMIT 1");
   if (!rows.length) {
@@ -213,6 +219,8 @@ async function marketSnapshot(marketId, accountId) {
     market: {
       ...market,
       yes_price: yes,
+      opening_yes_price: Number(market.opening_yes_price ?? yes),
+      liquidity: Number(market.liquidity ?? 100),
       no_price: Number((1 - yes).toFixed(4)),
       volume: Number(volumeQ.rows[0].volume),
     },
@@ -237,6 +245,51 @@ async function marketSnapshot(marketId, accountId) {
 
 function clampPrice(p) {
   return Math.max(0.01, Math.min(0.99, Number(p.toFixed(4))));
+}
+
+function sigmoid(x) {
+  if (x > 40) return 1;
+  if (x < -40) return 0;
+  return 1 / (1 + Math.exp(-x));
+}
+
+function logit(p) {
+  const q = Math.max(0.0001, Math.min(0.9999, p));
+  return Math.log(q / (1 - q));
+}
+
+// Liquidity is an approximate market-depth control in virtual dollars.
+// Larger liquidity means a given trade produces less probability movement.
+function projectPrice(yesPrice, liquidity, side, action, quantity) {
+  const yes = Number(yesPrice);
+  const liq = Math.max(1, Number(liquidity) || 100);
+  const qty = Math.max(0, Number(quantity));
+  const currentSidePrice = side === "YES" ? yes : 1 - yes;
+  const notional = currentSidePrice * qty;
+  const direction = (action === "BUY" ? 1 : -1) * (side === "YES" ? 1 : -1);
+  const shift = Math.min(3, notional / liq);
+  return clampPrice(sigmoid(logit(yes) + direction * shift));
+}
+
+function quoteForMarket(market, side, action, quantity) {
+  const yes = Number(market.yes_price);
+  const endYes = projectPrice(yes, market.liquidity, side, action, quantity);
+  const startPrice = side === "YES" ? yes : 1 - yes;
+  const endPrice = side === "YES" ? endYes : 1 - endYes;
+  const avgPrice = (startPrice + endPrice) / 2;
+  const gross = avgPrice * Number(quantity);
+  const fee = gross * 0.01;
+  return {
+    startPrice: Number(startPrice.toFixed(4)),
+    endPrice: Number(endPrice.toFixed(4)),
+    averagePrice: Number(avgPrice.toFixed(4)),
+    gross: Number(gross.toFixed(4)),
+    fee: Number(fee.toFixed(4)),
+    total: Number((gross + fee).toFixed(4)),
+    priceMove: Number((endYes - yes).toFixed(4)),
+    yesPriceAfter: endYes,
+    noPriceAfter: Number((1 - endYes).toFixed(4)),
+  };
 }
 
 async function executeTrade({ accountId, marketId, action, side, quantity }) {
@@ -264,10 +317,10 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
     if (!accountQ.rows.length) throw new Error("Account not found.");
     const account = accountQ.rows[0];
 
-    const yes = Number(market.yes_price);
-    const price = side === "YES" ? yes : 1 - yes;
-    const gross = Number((price * quantity).toFixed(4));
-    const fee = Number((gross * 0.01).toFixed(4));
+    const quote = quoteForMarket(market, side, action, quantity);
+    const price = quote.averagePrice;
+    const gross = quote.gross;
+    const fee = quote.fee;
 
     const posQ = await client.query(
       "SELECT * FROM positions WHERE account_id=$1 AND market_id=$2 AND side=$3 FOR UPDATE",
@@ -305,11 +358,7 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
       `, [accountId, marketId, side, newQty, newQty ? currentAvg : 0, realized]);
     }
 
-    // Small deterministic price impact for the demo AMM.
-    const direction = action === "BUY" ? 1 : -1;
-    const sideDirection = side === "YES" ? 1 : -1;
-    const impact = Math.min(0.03, quantity * 0.00015);
-    const nextYes = clampPrice(yes + direction * sideDirection * impact);
+    const nextYes = quote.yesPriceAfter;
     await client.query("UPDATE markets SET yes_price=$1, updated_at=NOW() WHERE id=$2", [nextYes, marketId]);
 
     await client.query(`
@@ -320,7 +369,7 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
     await client.query(`
       INSERT INTO audit_logs (actor, action, market_id, details)
       VALUES ($1,$2,$3,$4)
-    `, [accountId, `${action}_${side}`, marketId, JSON.stringify({ quantity, price, gross, fee })]);
+    `, [accountId, `${action}_${side}`, marketId, JSON.stringify({ quantity, price, gross, fee, priceMove: quote.priceMove, yesPriceAfter: quote.yesPriceAfter, liquidity: Number(market.liquidity) })]);
 
     await client.query("COMMIT");
     return await marketSnapshot(marketId, accountId);
@@ -384,6 +433,24 @@ app.get("/api/market/:id", async (req, res) => {
   res.json(snap);
 });
 
+app.post("/api/quote", async (req, res) => {
+  try {
+    const marketId = Number(req.body?.marketId);
+    const side = String(req.body?.side || "").toUpperCase();
+    const action = String(req.body?.action || "BUY").toUpperCase();
+    const quantity = Math.floor(Number(req.body?.quantity));
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 10000) throw new Error("Quantity must be a whole number from 1 to 10,000.");
+    if (!["YES","NO"].includes(side) || !["BUY","SELL"].includes(action)) throw new Error("Invalid quote.");
+    const q = await pool.query("SELECT * FROM markets WHERE id=$1", [marketId]);
+    if (!q.rows.length) return res.status(404).json({ error: "Market not found." });
+    const market = q.rows[0];
+    if (!["OPEN","TRADING"].includes(market.status)) throw new Error("Trading is closed for this market.");
+    res.json(quoteForMarket(market, side, action, quantity));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 app.post("/api/trade", async (req, res) => {
   try {
     const accountId = req.header("x-account-id");
@@ -441,6 +508,7 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
     scheduledAt = null,
     closeAt = null,
     yesPrice = 0.50,
+    liquidity = 100,
   } = req.body || {};
 
   const day = String(eventDay || "").toUpperCase();
@@ -449,12 +517,14 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
   const b = String(sideB || "").trim();
   const event = String(eventName || "Ossper Weekly").trim();
   const price = Number(yesPrice);
+  const depth = Number(liquidity);
 
   if (!["FRIDAY","SATURDAY","SUNDAY"].includes(day)) return res.status(400).json({ error: "Event day must be Friday, Saturday, or Sunday." });
   if (!["1v1","2v2"].includes(fmt)) return res.status(400).json({ error: "Format must be 1v1 or 2v2." });
   if (a.length < 2 || b.length < 2) return res.status(400).json({ error: "Both players/teams are required." });
   if (event.length < 2) return res.status(400).json({ error: "Event name is required." });
   if (!Number.isFinite(price) || price < 0.01 || price > 0.99) return res.status(400).json({ error: "YES starting price must be between 0.01 and 0.99." });
+  if (!Number.isFinite(depth) || depth < 10 || depth > 1000000) return res.status(400).json({ error: "Liquidity must be between $10 and $1,000,000." });
 
   const client = await pool.connect();
   try {
@@ -467,14 +537,14 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
     const question = `Will ${a} beat ${b}?`;
     const description = `${event} · ${day} ${fmt}`;
     const marketQ = await client.query(`
-      INSERT INTO markets (match_id, question, description, yes_price, status, close_at)
-      VALUES ($1,$2,$3,$4,'DRAFT',$5) RETURNING *
-    `, [match.id, question, description, price, closeAt || null]);
+      INSERT INTO markets (match_id, question, description, yes_price, opening_yes_price, liquidity, status, close_at)
+      VALUES ($1,$2,$3,$4,$4,$5,'DRAFT',$6) RETURNING *
+    `, [match.id, question, description, price, depth, closeAt || null]);
 
     await client.query(`
       INSERT INTO audit_logs (actor, action, market_id, details)
       VALUES ('admin','CREATE_MATCH_MARKET',$1,$2)
-    `, [marketQ.rows[0].id, JSON.stringify({ matchId: match.id, event, day, format: fmt, sideA: a, sideB: b, scheduledAt, closeAt, yesPrice: price })]);
+    `, [marketQ.rows[0].id, JSON.stringify({ matchId: match.id, event, day, format: fmt, sideA: a, sideB: b, scheduledAt, closeAt, yesPrice: price, liquidity: depth })]);
 
     await client.query("COMMIT");
     res.json({ match, market: marketQ.rows[0] });
@@ -536,15 +606,17 @@ app.post("/api/admin/matches/:id/cancel", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/markets", adminOnly, async (req, res) => {
-  const { question, description = "", yesPrice = 0.50, closeAt = null } = req.body || {};
+  const { question, description = "", yesPrice = 0.50, closeAt = null, liquidity = 100 } = req.body || {};
   if (!question || String(question).trim().length < 5) return res.status(400).json({ error: "Question is required." });
   const price = Number(yesPrice);
   if (!Number.isFinite(price) || price < 0.01 || price > 0.99) return res.status(400).json({ error: "YES price must be between 0.01 and 0.99." });
+  const depth = Number(liquidity);
+  if (!Number.isFinite(depth) || depth < 10 || depth > 1000000) return res.status(400).json({ error: "Liquidity must be between $10 and $1,000,000." });
 
   const q = await pool.query(`
-    INSERT INTO markets (question, description, yes_price, status, close_at)
-    VALUES ($1,$2,$3,'DRAFT',$4) RETURNING *
-  `, [String(question).trim(), String(description), price, closeAt || null]);
+    INSERT INTO markets (question, description, yes_price, opening_yes_price, liquidity, status, close_at)
+    VALUES ($1,$2,$3,$3,$4,'DRAFT',$5) RETURNING *
+  `, [String(question).trim(), String(description), price, depth, closeAt || null]);
 
   await pool.query(`
     INSERT INTO audit_logs (actor, action, market_id, details)
