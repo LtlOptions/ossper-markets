@@ -67,7 +67,7 @@
 
         <div class="meta">
           <span>Volume ${money(m.volume)}</span>
-          <span>YES + NO = $1.00</span>
+          <span>YES + NO = $1.00</span><span>1% fee · 10s cooldown</span>
         </div>
       </article>`;
     }).join("");
@@ -121,7 +121,7 @@
 
   function renderHistory(trades) {
     $("history").innerHTML = trades.length ? trades.map(t =>
-      `<div class="history-item"><strong>${t.action} ${t.contracts} ${t.side}</strong> @ ${money(t.price)}<br><span class="muted">${escapeHtml(t.title)} · ${money(t.total)}</span></div>`
+      `<div class="history-item"><strong>${t.action} ${t.contracts} ${t.side}</strong> @ ${money(t.price)}<br><span class="muted">${escapeHtml(t.title)} · ${money(t.total)} · fee ${money(t.fee || 0)}</span></div>`
     ).join("") : "No trades yet.";
   }
 
@@ -164,7 +164,7 @@
         method: "POST",
         body: JSON.stringify({ marketId, side, action, contracts: quantity })
       });
-      toast(`${action} ${quantity} ${side} executed at ${money(result.trade.price)}`);
+      toast(`${action} ${quantity} ${side} @ ${money(result.trade.price)} · fee ${money(result.fee)}`);
       await load();
     } catch (error) {
       toast(error.message, false);

@@ -1,18 +1,26 @@
-# Ossper Markets
+# Ossper Markets — Anti-Scalping Trading Engine Update
 
-Community prediction market — virtual money only.
+This update keeps the existing server-authoritative virtual-money system and adds:
 
-## Current build
-- PostgreSQL-backed, server-authoritative virtual balance
-- YES/NO markets with YES + NO = $1.00
-- Buy and sell contracts
-- Persistent positions and trade history
-- Average entry price
-- Position value
-- Realized and unrealized P/L
-- Automated liquidity price movement
-- Transactional account/position/ledger updates
-- Helmet, rate limiting, secure session cookie settings
+- Real automated liquidity using an LMSR-style market maker instead of the old linear price-jump demo.
+- YES + NO = $1.00 at all times.
+- 1.00% trading fee on every executed trade.
+- 10-second per-market trade cooldown to discourage rapid churn/bot scalping.
+- 500-contract maximum position per side per market.
+- Existing buy/sell/P&L accounting preserved.
+- Automatic database migration for existing Ossper databases.
+- Trade history records the fee.
 
-## Important
-This is still a virtual-money development build. It is **not** a real-money trading platform and is not ready for real-money use.
+The key anti-manipulation property is that buying to push a price up and immediately selling back cannot manufacture profit from the price movement. The market maker charges increasing prices as a trader pushes the market and the trader also pays the trading fee.
+
+## Files to upload
+Replace these files in the GitHub repository:
+
+- `server.js`
+- `app.js`
+- `index.html`
+
+Do not replace `package.json` unless the existing repository has a different dependency set.
+
+## Current account state
+The update does NOT reset existing virtual balances, positions, or trade history.

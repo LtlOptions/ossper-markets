@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS markets (
   status TEXT NOT NULL DEFAULT 'OPEN'
     CHECK (status IN ('DRAFT','OPEN','TRADING','CLOSED','AWAITING_RESULT','RESOLVED','SETTLED','VOID')),
   yes_price_cents INTEGER NOT NULL DEFAULT 50 CHECK (yes_price_cents BETWEEN 1 AND 99),
+  q_yes DOUBLE PRECISION,
+  q_no DOUBLE PRECISION,
+  liquidity_b DOUBLE PRECISION NOT NULL DEFAULT 100,
   volume_cents BIGINT NOT NULL DEFAULT 0 CHECK (volume_cents >= 0),
   closes_at TIMESTAMPTZ,
   outcome TEXT CHECK (outcome IN ('YES','NO') OR outcome IS NULL),
@@ -132,24 +135,62 @@ function clamp(value, min, max) {
 }
 
 /*
-  V1 liquidity model:
-  - The market always has a YES price and NO is exactly 100 - YES.
-  - Every executed buy moves the price modestly in that side's direction.
-  - Every sell moves it back.
-  - This is an intentionally simple automated liquidity model, not a final AMM.
-  - The ledger remains the source of truth for user money.
+  Ossper automated liquidity model: LMSR (logarithmic market scoring rule).
+  This gives us real price impact instead of the old linear price-jump demo.
+  YES + NO always equals $1.00.
+
+  Important anti-scalping properties:
+  - Buying moves the marginal price against the buyer.
+  - Selling moves it back against the seller.
+  - A buy-then-immediate-sell round trip cannot create money from price movement.
+  - A small trading fee and short market cooldown add friction to rapid churn.
 */
-function nextPrice(currentYes, side, action, contracts) {
-  const signed = action === "BUY" ? contracts : -contracts;
-  const direction = side === "YES" ? 1 : -1;
-  const move = Math.max(1, Math.round(Math.sqrt(contracts) * 2)) * signed * direction;
-  return clamp(currentYes + move, 5, 95);
+const TRADING_FEE_BPS = 100; // 1.00% per executed trade
+const TRADE_COOLDOWN_SECONDS = 10;
+const MAX_POSITION_CONTRACTS = 500;
+const LIQUIDITY_B_DEFAULT = 100;
+
+function lmsrCost(qYes, qNo, b) {
+  const a = qYes / b;
+  const c = qNo / b;
+  const max = Math.max(a, c);
+  return b * (max + Math.log(Math.exp(a - max) + Math.exp(c - max)));
+}
+
+function lmsrPrice(qYes, qNo, b, side) {
+  const a = qYes / b;
+  const c = qNo / b;
+  const max = Math.max(a, c);
+  const ea = Math.exp(a - max);
+  const ec = Math.exp(c - max);
+  const yes = ea / (ea + ec);
+  return side === 'YES' ? yes : 1 - yes;
+}
+
+function lmsrTrade(qYes, qNo, b, side, action, contracts) {
+  const before = lmsrCost(qYes, qNo, b);
+  const sign = action === 'BUY' ? 1 : -1;
+  const nextYes = qYes + (side === 'YES' ? sign * contracts : 0);
+  const nextNo = qNo + (side === 'NO' ? sign * contracts : 0);
+  const after = lmsrCost(nextYes, nextNo, b);
+  const delta = after - before;
+  const grossCents = Math.max(1, Math.round(Math.abs(delta) * 100));
+  return { nextYes, nextNo, grossCents, averagePrice: grossCents / contracts / 100 };
+}
+
+function feeFor(grossCents) {
+  return Math.max(1, Math.ceil(grossCents * TRADING_FEE_BPS / 10000));
 }
 
 async function ensureSchemaAndSeed() {
   await pool.query(SCHEMA_SQL);
-  // Safe migration for databases created before realized P/L was added.
+  // Safe migrations for databases created by earlier Ossper versions.
   await pool.query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS realized_pnl_cents BIGINT NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS q_yes DOUBLE PRECISION`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS q_no DOUBLE PRECISION`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS liquidity_b DOUBLE PRECISION NOT NULL DEFAULT 100`);
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS fee_cents BIGINT NOT NULL DEFAULT 0`);
+  await pool.query(`UPDATE markets SET q_yes = liquidity_b * LN(yes_price_cents::double precision / (100 - yes_price_cents)::double precision), q_no = 0 WHERE q_yes IS NULL OR q_no IS NULL`);
 
   const demoId = "00000000-0000-4000-8000-000000000001";
   const marketId = "00000000-0000-4000-8000-000000000101";
@@ -302,9 +343,15 @@ app.post("/api/trades", async (req, res) => {
     const market = marketResult.rows[0];
     if (market.status !== "TRADING") throw new Error("Market is not currently trading");
 
-    const currentYes = Number(market.yes_price_cents);
-    const currentPrice = side === "YES" ? currentYes : 100 - currentYes;
-    const totalCents = currentPrice * qty;
+    const b = Number(market.liquidity_b || LIQUIDITY_B_DEFAULT);
+    const qYes = Number(market.q_yes);
+    const qNo = Number(market.q_no);
+    if (!Number.isFinite(qYes) || !Number.isFinite(qNo) || b <= 0) {
+      throw new Error("Market liquidity state is invalid");
+    }
+
+    const currentPriceFloat = lmsrPrice(qYes, qNo, b, side);
+    const currentPriceCents = Math.max(1, Math.min(99, Math.round(currentPriceFloat * 100)));
 
     const accountResult = await client.query(
       `SELECT * FROM accounts WHERE user_id = $1 FOR UPDATE`,
@@ -326,12 +373,33 @@ app.post("/api/trades", async (req, res) => {
       position = inserted.rows[0];
     }
 
+    const recentTrade = await client.query(
+      `SELECT created_at FROM trades WHERE user_id=$1 AND market_id=$2 ORDER BY created_at DESC LIMIT 1`,
+      [userId, marketId]
+    );
+    if (recentTrade.rowCount) {
+      const elapsedSeconds = (Date.now() - new Date(recentTrade.rows[0].created_at).getTime()) / 1000;
+      if (elapsedSeconds < TRADE_COOLDOWN_SECONDS) {
+        const wait = Math.ceil(TRADE_COOLDOWN_SECONDS - elapsedSeconds);
+        throw new Error(`Slow down — wait ${wait}s before trading this market again.`);
+      }
+    }
+
+    const ownedBefore = side === 'YES' ? Number(position.yes_contracts) : Number(position.no_contracts);
+    if (action === 'BUY' && ownedBefore + qty > MAX_POSITION_CONTRACTS) {
+      throw new Error(`Maximum position is ${MAX_POSITION_CONTRACTS} ${side} contracts.`);
+    }
+
+    const quote = lmsrTrade(qYes, qNo, b, side, action, qty);
+    const feeCents = feeFor(quote.grossCents);
+    const cashDelta = action === 'BUY' ? -(quote.grossCents + feeCents) : (quote.grossCents - feeCents);
+
     if (action === "BUY") {
-      if (Number(account.balance_cents) < totalCents) {
+      if (Number(account.balance_cents) < quote.grossCents + feeCents) {
         throw new Error("Insufficient virtual balance");
       }
 
-      const newBalance = Number(account.balance_cents) - totalCents;
+      const newBalance = Number(account.balance_cents) - quote.grossCents - feeCents;
       await client.query(
         `UPDATE accounts SET balance_cents = $1, updated_at = NOW() WHERE user_id = $2`,
         [newBalance, userId]
@@ -339,8 +407,8 @@ app.post("/api/trades", async (req, res) => {
 
       const yesContracts = Number(position.yes_contracts) + (side === "YES" ? qty : 0);
       const noContracts = Number(position.no_contracts) + (side === "NO" ? qty : 0);
-      const yesCost = Number(position.yes_cost_cents) + (side === "YES" ? totalCents : 0);
-      const noCost = Number(position.no_cost_cents) + (side === "NO" ? totalCents : 0);
+      const yesCost = Number(position.yes_cost_cents) + (side === "YES" ? quote.grossCents + feeCents : 0);
+      const noCost = Number(position.no_cost_cents) + (side === "NO" ? quote.grossCents + feeCents : 0);
 
       await client.query(
         `UPDATE positions
@@ -353,13 +421,13 @@ app.post("/api/trades", async (req, res) => {
         `INSERT INTO ledger_entries
          (user_id, entry_type, amount_cents, balance_after_cents, reference_type, reference_id, description)
          VALUES ($1, 'TRADE_BUY', $2, $3, 'TRADE', 'pending', $4)`,
-        [userId, -totalCents, newBalance, `Bought ${qty} ${side} contract(s)`]
+        [userId, -(quote.grossCents + feeCents), newBalance, `Bought ${qty} ${side} contract(s) + 1.00% fee`]
       );
     } else {
       const owned = side === "YES" ? Number(position.yes_contracts) : Number(position.no_contracts);
       if (owned < qty) throw new Error(`You only own ${owned} ${side} contract(s)`);
 
-      const newBalance = Number(account.balance_cents) + totalCents;
+      const newBalance = Number(account.balance_cents) + quote.grossCents - feeCents;
       await client.query(
         `UPDATE accounts SET balance_cents = $1, updated_at = NOW() WHERE user_id = $2`,
         [newBalance, userId]
@@ -368,7 +436,7 @@ app.post("/api/trades", async (req, res) => {
       const costBasisPool = side === "YES" ? Number(position.yes_cost_cents) : Number(position.no_cost_cents);
       // Realized P/L is based on the contracts' average entry cost, not the sale proceeds.
       const costBasisSold = Math.round(costBasisPool * qty / owned);
-      const realizedPnl = totalCents - costBasisSold;
+      const realizedPnl = (quote.grossCents - feeCents) - costBasisSold;
 
       const yesContracts = Number(position.yes_contracts) - (side === "YES" ? qty : 0);
       const noContracts = Number(position.no_contracts) - (side === "NO" ? qty : 0);
@@ -387,15 +455,15 @@ app.post("/api/trades", async (req, res) => {
         `INSERT INTO ledger_entries
          (user_id, entry_type, amount_cents, balance_after_cents, reference_type, reference_id, description)
          VALUES ($1, 'TRADE_SELL', $2, $3, 'TRADE', 'pending', $4)`,
-        [userId, totalCents, newBalance, `Sold ${qty} ${side} contract(s)`]
+        [userId, quote.grossCents - feeCents, newBalance, `Sold ${qty} ${side} contract(s) - 1.00% fee`]
       );
     }
 
     const tradeResult = await client.query(
-      `INSERT INTO trades (user_id, market_id, side, action, contracts, price_cents, total_cents)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `INSERT INTO trades (user_id, market_id, side, action, contracts, price_cents, total_cents, fee_cents)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING id`,
-      [userId, marketId, side, action, qty, currentPrice, totalCents]
+      [userId, marketId, side, action, qty, Math.max(1, Math.min(99, Math.round(quote.averagePrice * 100))), quote.grossCents, feeCents]
     );
     const tradeId = tradeResult.rows[0].id;
 
@@ -407,12 +475,13 @@ app.post("/api/trades", async (req, res) => {
       [String(tradeId), userId]
     );
 
-    const newYes = nextPrice(currentYes, side, action, qty);
+    const newYesFloat = lmsrPrice(quote.nextYes, quote.nextNo, b, 'YES');
+    const newYesCents = Math.max(1, Math.min(99, Math.round(newYesFloat * 100)));
     await client.query(
       `UPDATE markets
-       SET yes_price_cents=$1, volume_cents=volume_cents+$2, updated_at=NOW()
-       WHERE id=$3`,
-      [newYes, totalCents, marketId]
+       SET q_yes=$1, q_no=$2, yes_price_cents=$3, volume_cents=volume_cents+$4, updated_at=NOW()
+       WHERE id=$5`,
+      [quote.nextYes, quote.nextNo, newYesCents, quote.grossCents, marketId]
     );
 
     await client.query("COMMIT");
@@ -424,11 +493,15 @@ app.post("/api/trades", async (req, res) => {
         side,
         action,
         contracts: qty,
-        price: currentPrice / 100,
-        total: dollars(totalCents)
+        price: quote.averagePrice,
+        total: dollars(quote.grossCents),
+        fee: dollars(feeCents),
+        netCash: dollars(action === 'BUY' ? -(quote.grossCents + feeCents) : (quote.grossCents - feeCents))
       },
-      newYesPrice: newYes / 100,
-      newNoPrice: (100 - newYes) / 100
+      newYesPrice: newYesCents / 100,
+      newNoPrice: (100 - newYesCents) / 100,
+      fee: dollars(feeCents),
+      cooldownSeconds: TRADE_COOLDOWN_SECONDS
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -443,7 +516,7 @@ app.get("/api/history", async (req, res) => {
   try {
     const userId = await getDemoUser(req);
     const result = await pool.query(
-      `SELECT t.id, t.side, t.action, t.contracts, t.price_cents, t.total_cents, t.created_at, m.title
+      `SELECT t.id, t.side, t.action, t.contracts, t.price_cents, t.total_cents, t.fee_cents, t.created_at, m.title
        FROM trades t JOIN markets m ON m.id=t.market_id
        WHERE t.user_id=$1
        ORDER BY t.created_at DESC
@@ -459,6 +532,7 @@ app.get("/api/history", async (req, res) => {
         contracts: Number(t.contracts),
         price: Number(t.price_cents) / 100,
         total: dollars(t.total_cents),
+        fee: dollars(t.fee_cents || 0),
         createdAt: t.created_at
       }))
     });
