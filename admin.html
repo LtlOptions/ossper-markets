@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ossper Admin</title>
+<style>
+body{margin:0;background:#080d18;color:#f3f6ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:900px;margin:auto;padding:45px 20px}.box{background:#111a2b;border:1px solid #2d446a;border-radius:22px;padding:28px;margin:20px 0}h1{font-size:40px}h2{margin-top:0}input,textarea,select{width:100%;box-sizing:border-box;background:#0b1424;color:white;border:1px solid #365174;border-radius:12px;padding:14px;margin:8px 0 14px;font-size:17px}button{background:#6f39d8;color:white;border:0;border-radius:12px;padding:14px 20px;font-weight:800;font-size:16px;margin:5px 5px 5px 0}.market{border-top:1px solid #2b405f;padding:20px 0}.pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#20355a;color:#9eb8ff;margin-right:8px}.muted{color:#9aabc3}.danger{background:#7d2834}.success{color:#7ce0a5}.err{color:#ff9999}.audit{font-size:14px;border-top:1px solid #273b59;padding:10px 0}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:650px){.row{grid-template-columns:1fr}}
+</style></head>
+<body><main>
+<h1>OSSPER ADMIN</h1><div class="muted">Market controls. Virtual-money environment.</div>
+<div id="login" class="box"><h2>Admin login</h2><input id="key" type="password" placeholder="Admin key"><button onclick="login()">Sign in</button><div id="loginMsg"></div></div>
+<div id="panel" style="display:none">
+<div class="box"><h2>Create market</h2><input id="q" placeholder="Question, e.g. Will Player A win Friday 1v1?"><textarea id="d" placeholder="Description"></textarea><div class=row><div><label>YES starting price</label><input id="p" type="number" min=".01" max=".99" step=".01" value=".50"></div><div><label>Close time (optional)</label><input id="close" type="datetime-local"></div></div><button onclick="createMarket()">Create draft</button><div id="createMsg"></div></div>
+<div class="box"><h2>Markets</h2><div id="markets"></div></div>
+<div class="box"><h2>Audit log</h2><div id="audit"></div></div>
+</div></main>
+<script>
+async function api(u,o={}){o.headers={...(o.headers||{}),"Content-Type":"application/json"};let r=await fetch(u,o);let d=await r.json();if(!r.ok)throw Error(d.error||"Request failed");return d}
+async function login(){try{await api("/api/admin/login",{method:"POST",body:JSON.stringify({key:document.getElementById("key").value})});document.getElementById("login").style.display="none";document.getElementById("panel").style.display="block";load()}catch(e){document.getElementById("loginMsg").innerHTML="<div class=err>"+e.message+"</div>"}}
+async function createMarket(){try{await api("/api/admin/markets",{method:"POST",body:JSON.stringify({question:q.value,description:d.value,yesPrice:Number(p.value),closeAt:close.value||null})});q.value=d.value="";load()}catch(e){createMsg.innerHTML="<div class=err>"+e.message+"</div>"}}
+function marketCard(m){return `<div class=market><h3>${m.question}</h3><div class=muted>${m.description||""}</div><p><span class=pill>${m.status}</span> YES $${Number(m.yes_price).toFixed(2)} · NO $${(1-Number(m.yes_price)).toFixed(2)} · volume $${Number(m.volume).toFixed(2)}</p>
+<button onclick="status(${m.id},'OPEN')">Open</button><button onclick="status(${m.id},'TRADING')">Trading</button><button onclick="status(${m.id},'CLOSED')">Close</button><button onclick="status(${m.id},'AWAITING_RESULT')">Await result</button><button onclick="result(${m.id},'YES')">Resolve YES</button><button onclick="result(${m.id},'NO')">Resolve NO</button><button class=danger onclick="status(${m.id},'VOID')">Void</button></div>`}
+async function status(id,s){try{await api("/api/admin/markets/"+id+"/status",{method:"POST",body:JSON.stringify({status:s})});load()}catch(e){alert(e.message)}}
+async function result(id,r){if(!confirm("Set official result to "+r+" and settle this market?"))return;try{await api("/api/admin/markets/"+id+"/result",{method:"POST",body:JSON.stringify({result:r})});load()}catch(e){alert(e.message)}}
+async function load(){try{let ms=await api("/api/admin/markets");markets.innerHTML=ms.map(marketCard).join("")||"No markets.";let a=await api("/api/admin/audit");audit.innerHTML=a.map(x=>`<div class=audit><b>${x.action}</b> · ${x.actor} · market ${x.market_id||"-"}<br><span class=muted>${new Date(x.created_at).toLocaleString()} · ${JSON.stringify(x.details)}</span></div>`).join("")}catch(e){document.getElementById("panel").innerHTML="<div class=err>"+e.message+"</div>"}}
+</script></body></html>

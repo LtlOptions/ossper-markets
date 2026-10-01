@@ -1,103 +1,72 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07101f">
-  <title>Ossper Markets</title>
-  <style>
-    :root { color-scheme: dark; --bg:#07101f; --panel:#101c2e; --line:#263b59; --muted:#91a1ba; --text:#f2f6ff; --accent:#7ea6ff; --good:#8ee6b0; --bad:#ff9a9a; }
-    * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    header { position:sticky; top:0; z-index:5; background:rgba(7,16,31,.94); backdrop-filter:blur(18px); border-bottom:1px solid var(--line); }
-    .nav { max-width:1180px; margin:auto; padding:18px 22px; display:flex; align-items:center; justify-content:space-between; gap:18px; }
-    .brand { font-size:22px; font-weight:800; letter-spacing:.02em; }
-    .navlinks { display:flex; gap:20px; color:var(--muted); font-size:14px; }
-    main { max-width:1180px; margin:auto; padding:38px 22px 80px; }
-    .eyebrow { color:var(--accent); font-size:13px; font-weight:700; letter-spacing:.12em; }
-    h1 { font-size:42px; margin:8px 0 8px; }
-    .subtitle { color:var(--muted); margin:0 0 30px; }
-    .grid { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(290px,.8fr); gap:22px; }
-    .panel { background:var(--panel); border:1px solid var(--line); border-radius:22px; padding:24px; }
-    .panel h2 { margin:0 0 18px; font-size:20px; }
-    .market { border:1px solid var(--line); border-radius:18px; padding:20px; margin-bottom:16px; background:#0d1929; }
-    .market:last-child { margin-bottom:0; }
-    .market-top { display:flex; justify-content:space-between; gap:16px; }
-    .market-title { font-size:19px; font-weight:750; }
-    .tag { color:var(--good); font-size:12px; font-weight:700; }
-    .desc { color:var(--muted); margin:8px 0 18px; line-height:1.45; }
-    .prices { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .quote { border:1px solid var(--line); border-radius:15px; padding:15px; }
-    .quote.yes { border-color:#35537c; }
-    .quote.no { border-color:#493b60; }
-    .quote-label { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
-    .price { font-size:28px; font-weight:800; margin:5px 0 10px; }
-    button { width:100%; border:1px solid #456184; background:#1a2d49; color:var(--text); border-radius:12px; padding:12px; font-size:15px; font-weight:700; }
-    button:active { transform:translateY(1px); }
-    .sell { background:#201b2d; border-color:#4b3d65; }
-    .meta { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; margin-top:15px; }
-    .balance { font-size:38px; font-weight:850; margin:5px 0 22px; }
-    .position { border-top:1px solid var(--line); padding:14px 0; }
-    .position-stats { color:var(--muted); font-size:12px; margin-top:5px; }
-    .position-mini { color:var(--muted); font-size:12px; margin-top:9px; }
-    .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:0 0 22px; }
-    .summary-card { border:1px solid var(--line); border-radius:14px; padding:12px; background:#0d1929; }
-    .summary-label { color:var(--muted); font-size:11px; }
-    .summary-value { font-size:18px; font-weight:800; margin-top:3px; }
-    .sell { margin-top:8px; background:#211d2e; border-color:#55466f; }
-    @media(max-width:500px){ .summary{grid-template-columns:1fr;} }
-    .position:first-of-type { border-top:0; }
-    .pos-row { display:flex; justify-content:space-between; gap:12px; }
-    .muted { color:var(--muted); }
-    .history-item { border-top:1px solid var(--line); padding:12px 0; font-size:13px; }
-    .history-item:first-child { border-top:0; }
-    .ok { color:var(--good); }
-    .error { color:var(--bad); }
-    #toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:#182840; border:1px solid var(--line); padding:12px 16px; border-radius:12px; display:none; z-index:10; }
-    @media(max-width:820px){ .grid{grid-template-columns:1fr;} h1{font-size:34px;} .navlinks{display:none;} }
-  </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ossper Markets</title>
+<style>
+:root{--bg:#07101f;--card:#101c31;--line:#2b456d;--text:#f4f7ff;--muted:#96a7c3;--yes:#83d9a8;--no:#d39adf;--btn:#20365a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}header{height:118px;border-bottom:1px solid #263a5d;display:flex;align-items:center;padding:0 42px;font-weight:800;font-size:32px}main{max-width:860px;margin:auto;padding:70px 42px}.eyebrow{color:#89aaff;letter-spacing:4px;font-weight:800}.title{font-size:62px;margin:25px 0 10px}.sub{font-size:25px;color:var(--muted);line-height:1.4}.card{background:var(--card);border:1px solid var(--line);border-radius:28px;padding:42px;margin-top:45px}.market{border:1px solid var(--line);border-radius:24px;padding:36px}.marketHead{display:flex;justify-content:space-between;gap:20px}.status{color:var(--yes);font-weight:800}.question{font-size:31px;font-weight:800}.desc{color:var(--muted);font-size:21px;line-height:1.45;margin:18px 0 30px}.prices{display:grid;grid-template-columns:1fr 1fr;gap:24px}.side{border:1px solid var(--line);border-radius:22px;padding:28px}.yes{border-color:#3f70aa}.no{border-color:#704879}.label{color:var(--muted);font-size:18px}.price{font-size:49px;font-weight:800;margin:8px 0 20px}button{width:100%;border:1px solid #4d709d;background:var(--btn);color:white;border-radius:16px;padding:18px;font-size:20px;font-weight:800;margin-top:10px}button.sell{border-color:#765487;background:#211a2e}button:disabled{opacity:.45}.meta{display:flex;justify-content:space-between;color:var(--muted);margin-top:25px;font-size:17px}.balance{font-size:62px;font-weight:800;margin:8px 0 35px}.positions div,.trade{border-bottom:1px solid #29405f;padding:17px 0}.trade{color:var(--muted)}.ok{color:#7de0a5;font-size:20px;margin-top:35px}.error{color:#ff9a9a;margin-top:15px}.qty{margin:25px 0 0}.qty input{width:100%;padding:16px;border-radius:12px;border:1px solid var(--line);background:#0b1629;color:white;font-size:20px}a{color:#9eb9ff}.small{color:var(--muted);font-size:15px;margin-top:15px}@media(max-width:650px){main{padding:45px 20px}.title{font-size:48px}.prices{gap:12px}.side{padding:20px}.price{font-size:39px}header{padding:0 22px}}
+</style>
 </head>
 <body>
-<header>
-  <div class="nav">
-    <div class="brand">OSSPER</div>
-    <div class="navlinks"><span>Markets</span><span>Portfolio</span><span>History</span></div>
-  </div>
-</header>
-
+<header>OSSPER</header>
 <main>
-  <div class="eyebrow">COMMUNITY PREDICTION MARKET</div>
-  <h1>Markets</h1>
-  <p class="subtitle">Trade virtual YES/NO contracts on community tournament outcomes.</p>
-
-  <div class="grid">
-    <section class="panel">
-      <h2>Live Markets</h2>
-      <div id="markets">Loading markets…</div>
-    </section>
-
-    <aside class="panel">
-      <div class="muted">AVAILABLE BALANCE</div>
-      <div id="balance" class="balance">$500.00</div>
-
-      <div class="summary">
-        <div class="summary-card"><div class="summary-label">POSITION VALUE</div><div id="positionValue" class="summary-value">$0.00</div></div>
-        <div class="summary-card"><div class="summary-label">UNREALIZED P/L</div><div id="unrealized" class="summary-value">+$0.00</div></div>
-        <div class="summary-card"><div class="summary-label">REALIZED P/L</div><div id="realized" class="summary-value">+$0.00</div></div>
-      </div>
-
-      <h2>Your Positions</h2>
-      <div id="positions" class="muted">No open positions yet.</div>
-
-      <h2 style="margin-top:28px;">Recent Trades</h2>
-      <div id="history" class="muted">No trades yet.</div>
-    </aside>
-  </div>
-
-  <p id="status" class="muted" style="margin-top:22px;">Connecting to Ossper engine…</p>
+<div class="eyebrow">COMMUNITY PREDICTION MARKET</div>
+<div class="title">Markets</div>
+<div class="sub">Trade virtual YES/NO contracts on community tournament outcomes.</div>
+<div id="app"></div>
 </main>
-
-<div id="toast"></div>
-<script src="/app.js" defer></script>
-</body>
-</html>
+<script>
+const KEY="ossper_account_id";
+let accountId=localStorage.getItem(KEY);
+async function api(url, opts={}) {
+  opts.headers={...(opts.headers||{}), "Content-Type":"application/json"};
+  if(accountId) opts.headers["x-account-id"]=accountId;
+  const r=await fetch(url,opts); const data=await r.json();
+  if(!r.ok) throw new Error(data.error||"Request failed");
+  return data;
+}
+async function boot(){
+  if(!accountId){ const s=await api("/api/session",{method:"POST",body:"{}"}); accountId=s.accountId; localStorage.setItem(KEY,accountId); }
+  render(await api("/api/markets"));
+}
+function money(n){return "$"+Number(n).toFixed(2)}
+function render(snaps){
+  if(!snaps.length){document.getElementById("app").innerHTML="<div class=card>No markets yet.</div>";return;}
+  const cards=snaps.map(s=>marketCard(s)).join("");
+  document.getElementById("app").innerHTML=cards;
+}
+function marketCard(s){
+  const m=s.market,a=s.account,yes=Number(m.yes_price),no=Number(m.no_price);
+  const pos=Object.fromEntries(a.positions.map(p=>[p.side,p]));
+  return `<section class="card"><div class="market">
+    <div class="marketHead"><div class="question">${m.question}</div><div class="status">${m.status}</div></div>
+    <div class="desc">${m.description}</div>
+    <div class="prices">
+      ${sideBox(m.id,"YES",yes,pos.YES)}
+      ${sideBox(m.id,"NO",no,pos.NO)}
+    </div>
+    <div class="meta"><span>Volume ${money(m.volume)}</span><span>YES + NO = $1.00</span></div>
+  </div>
+  <section class="card">
+    <div class="label">AVAILABLE BALANCE</div><div class="balance">${money(a.balance)}</div>
+    <div class="label">YOUR POSITIONS</div><div class="positions">${a.positions.length?a.positions.map(p=>`<div><b>${p.side} ${p.quantity}</b> · Avg ${money(p.avg_cost)}</div>`).join(""):"No open positions."}</div>
+    <h2>Recent Trades</h2>${a.trades.length?a.trades.map(t=>`<div class=trade><b>${t.action} ${t.quantity} ${t.side}</b> @ ${money(t.price)} · ${money(t.gross)} · fee ${money(t.fee)}</div>`).join(""):"<div class=trade>No trades yet.</div>"}
+    <div class="ok">Ossper engine connected ✓ · database-backed virtual balance</div>
+  </section></section>`;
+}
+function sideBox(marketId,side,price,p){
+ return `<div class="side ${side==="YES"?"yes":"no"}"><div class=label>${side}</div><div class=price>${money(price)}</div>
+ <button onclick="trade(${marketId},'${side}','BUY')">Buy ${side}</button>
+ ${p&&p.quantity>0?`<button class=sell onclick="trade(${marketId},'${side}','SELL')">Sell ${side}</button>`:""}
+ ${p&&p.quantity>0?`<div class=small>Own ${p.quantity} · Avg ${money(p.avg_cost)}</div>`:""}
+ </div>`;
+}
+async function trade(marketId,side,action){
+ const qty=prompt(`How many ${side} contracts?`,"1"); if(qty===null)return;
+ try{ await api("/api/trade",{method:"POST",body:JSON.stringify({marketId,action,side,quantity:Number(qty)})}); await boot(); }
+ catch(e){alert(e.message);}
+}
+boot().catch(e=>document.getElementById("app").innerHTML=`<div class=card><div class=error>${e.message}</div></div>`);
+</script>
+</body></html>
