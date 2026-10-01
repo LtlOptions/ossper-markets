@@ -546,13 +546,14 @@ app.get("/api/auth/config", (_req, res) => {
 });
 
 app.get("/api/me", async (req, res) => {
-  const accountId = await requestAccountId(req);
+  // Authentication status must come only from a valid server-side session.
+  // The x-account-id header is intentionally NOT sufficient to authenticate.
+  const accountId = await sessionAccountId(req);
   if (!accountId) return res.json({ authenticated: false, account: null });
-  await ensureAccount(accountId);
   const q = await pool.query("SELECT id, display_name, avatar_url, auth_provider, discord_id FROM accounts WHERE id=$1", [accountId]);
   if (!q.rows.length) return res.json({ authenticated: false, account: null });
   const a = q.rows[0];
-  res.json({ authenticated: a.auth_provider === 'discord', account: { id: a.id, displayName: a.display_name || 'Guest', avatarUrl: a.avatar_url || null, provider: a.auth_provider, discordLinked: Boolean(a.discord_id) } });
+  res.json({ authenticated: true, account: { id: a.id, displayName: a.display_name || 'Discord user', avatarUrl: a.avatar_url || null, provider: a.auth_provider, discordLinked: Boolean(a.discord_id) } });
 });
 
 app.post("/api/session", async (_req, res) => {

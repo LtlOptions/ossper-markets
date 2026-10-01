@@ -1,29 +1,18 @@
-# Ossper Markets v1.2
+# Ossper Markets v1.2.1
 
-Virtual-money community prediction market for Ossper tournament events.
+Small authentication patch for Ossper Markets v1.2.
 
-## v1.2 additions
-- Optional Discord OAuth identity and server-side sessions.
-- Guest mode remains available for testing.
-- Existing guest account can be linked to the Discord identity used during sign-in.
-- Account identity is server-authoritative once a session cookie exists.
-- Session tokens are stored as hashes in PostgreSQL and expire after 30 days.
-- Discord OAuth state is signed and short-lived.
-- Browser-level duplicate confirmation prompt removed; Ossper's own trade confirmation/quote is the confirmation layer.
-- Existing PostgreSQL data is preserved; migrations are additive.
+## v1.2.1 fixes
+- Fixed logout authentication state: a browser account ID can no longer keep a Discord session authenticated after the server session is deleted.
+- Logout now waits for the server to confirm session deletion before updating the UI.
+- Logout failure is surfaced instead of silently reloading.
+- Removed the accidental `menu` CSS class from the Sign out button.
+- No database wipe; existing markets, accounts, positions, trades, ledger, sessions, and audit data are preserved.
 
-## Discord configuration (Railway variables)
-Set these server-side in Railway Variables before enabling Discord login:
+## Discord environment variables
 - `DISCORD_CLIENT_ID`
 - `DISCORD_CLIENT_SECRET`
-- `DISCORD_REDIRECT_URI` = `https://ossper-markets-production.up.railway.app/auth/discord/callback`
-- `OSSPER_AUTH_SECRET` = a long random secret distinct from the admin key
+- `DISCORD_REDIRECT_URI`
+- `OSSPER_AUTH_SECRET`
 
-In the Discord Developer Portal, add the exact redirect URI above to the OAuth2 redirect URLs and use the `identify` scope. Never put the client secret in frontend code or GitHub.
-
-## Existing infrastructure
-- Frontend: `index.html`
-- Backend: `server.js` on Railway
-- Database: PostgreSQL
-- Admin: `admin.html`
-- Virtual money only. No real-money functionality is enabled.
+Virtual money only.
