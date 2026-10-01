@@ -1,4 +1,4 @@
-# Ossper Markets v1.5.0 — Demo Ready
+# Ossper Markets v1.5.1 — Demo Ready
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -22,3 +22,9 @@ Community prediction market for tournament events. Virtual money only.
 - OSSPER_AUTH_SECRET
 
 Virtual-money demo only. Do not treat this as a real-money platform.
+
+
+## v1.5.1 hotfix
+- Fixed public tournament rendering error (`renderTournamentGroups is not defined`).
+- Added stable Active / Upcoming / Past tournament grouping.
+- Added market anchors for tournament navigation.
