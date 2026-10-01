@@ -9,6 +9,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATABASE_URL = process.env.DATABASE_URL;
 const ADMIN_KEY = process.env.OSSPER_ADMIN_KEY;
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
+const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
+const AUTH_SECRET = process.env.OSSPER_AUTH_SECRET || ADMIN_KEY;
+const DISCORD_AUTH_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET && DISCORD_REDIRECT_URI);
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is missing.");
@@ -76,6 +81,71 @@ function setAdminCookie(res, token) {
   res.setHeader("Set-Cookie", `ossper_admin=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800`);
 }
 
+function hashToken(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
+function makeAuthState(accountId = null) {
+  const payload = { nonce: crypto.randomBytes(18).toString("hex"), exp: Date.now() + 10 * 60 * 1000, accountId: accountId || null };
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+function readAuthState(state) {
+  try {
+    const [body, sig] = String(state || "").split(".");
+    if (!body || !sig) return null;
+    const expected = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
+    if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (!payload.exp || payload.exp < Date.now()) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function cookieValue(req, name) {
+  const raw = req.headers.cookie || "";
+  const match = raw.split(";").map(v => v.trim()).find(v => v.startsWith(`${name}=`));
+  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader("Set-Cookie", `ossper_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader("Set-Cookie", "ossper_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+}
+
+function setStateCookie(res, state) {
+  res.setHeader("Set-Cookie", `ossper_oauth_state=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+}
+
+function clearStateCookie(res) {
+  res.append("Set-Cookie", "ossper_oauth_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
+}
+
+async function sessionAccountId(req) {
+  const token = cookieValue(req, "ossper_session");
+  if (!token) return null;
+  const hash = hashToken(token);
+  const q = await pool.query(`
+    SELECT account_id FROM sessions WHERE token_hash=$1 AND expires_at > NOW()
+  `, [hash]);
+  if (!q.rows.length) return null;
+  await pool.query("UPDATE sessions SET last_seen_at=NOW() WHERE token_hash=$1", [hash]);
+  return q.rows[0].account_id;
+}
+
+async function requestAccountId(req) {
+  const sessionId = await sessionAccountId(req);
+  if (sessionId) return sessionId;
+  const guestId = req.header("x-account-id");
+  if (guestId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(guestId)) return guestId;
+  return null;
+}
+
 async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS matches (
@@ -117,6 +187,18 @@ async function initDb() {
       balance NUMERIC(18,4) NOT NULL DEFAULT 500.00,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id UUID PRIMARY KEY,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS sessions_account_idx ON sessions(account_id);
+    CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions(expires_at);
 
     CREATE TABLE IF NOT EXISTS positions (
       account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -177,11 +259,18 @@ async function initDb() {
     );
     INSERT INTO system_controls (id, frozen) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;
   `);
+  await pool.query("DELETE FROM sessions WHERE expires_at <= NOW()");
 
   // Safe migrations for databases created by v0.6.1.
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS match_id INTEGER REFERENCES matches(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS opening_yes_price NUMERIC(10,4) NOT NULL DEFAULT 0.50`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS liquidity NUMERIC(18,4) NOT NULL DEFAULT 100.00`);
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS discord_id TEXT`);
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS display_name TEXT`);
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'guest'`);
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS accounts_discord_id_idx ON accounts(discord_id) WHERE discord_id IS NOT NULL`);
   await pool.query(`UPDATE markets SET opening_yes_price=yes_price WHERE opening_yes_price IS NULL OR opening_yes_price=0`);
   await pool.query(`UPDATE markets SET liquidity=100.00 WHERE liquidity IS NULL OR liquidity<=0`);
 
@@ -452,10 +541,115 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+app.get("/api/auth/config", (_req, res) => {
+  res.json({ discordEnabled: DISCORD_AUTH_ENABLED });
+});
+
+app.get("/api/me", async (req, res) => {
+  const accountId = await requestAccountId(req);
+  if (!accountId) return res.json({ authenticated: false, account: null });
+  await ensureAccount(accountId);
+  const q = await pool.query("SELECT id, display_name, avatar_url, auth_provider, discord_id FROM accounts WHERE id=$1", [accountId]);
+  if (!q.rows.length) return res.json({ authenticated: false, account: null });
+  const a = q.rows[0];
+  res.json({ authenticated: a.auth_provider === 'discord', account: { id: a.id, displayName: a.display_name || 'Guest', avatarUrl: a.avatar_url || null, provider: a.auth_provider, discordLinked: Boolean(a.discord_id) } });
+});
+
 app.post("/api/session", async (_req, res) => {
   const id = crypto.randomUUID();
   await ensureAccount(id);
-  res.json({ accountId: id });
+  res.json({ accountId: id, guest: true });
+});
+
+app.post("/api/auth/discord/start", async (req, res) => {
+  if (!DISCORD_AUTH_ENABLED) return res.status(503).json({ error: "Discord login is not configured yet." });
+  const guestId = req.header("x-account-id");
+  const accountId = guestId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(guestId) ? guestId : null;
+  const state = makeAuthState(accountId);
+  setStateCookie(res, state);
+  const params = new URLSearchParams({
+    client_id: DISCORD_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: DISCORD_REDIRECT_URI,
+    scope: "identify",
+    state
+  });
+  res.json({ url: `https://discord.com/oauth2/authorize?${params.toString()}` });
+});
+
+app.get("/auth/discord", async (req, res) => {
+  if (!DISCORD_AUTH_ENABLED) return res.status(503).send("Discord login is not configured yet.");
+  const state = makeAuthState(null);
+  setStateCookie(res, state);
+  const params = new URLSearchParams({ client_id: DISCORD_CLIENT_ID, response_type: "code", redirect_uri: DISCORD_REDIRECT_URI, scope: "identify", state });
+  res.redirect(`https://discord.com/oauth2/authorize?${params.toString()}`);
+});
+
+app.get("/auth/discord/callback", async (req, res) => {
+  if (!DISCORD_AUTH_ENABLED) return res.status(503).send("Discord login is not configured yet.");
+  const state = readAuthState(req.query.state);
+  const cookieState = readAuthState(cookieValue(req, "ossper_oauth_state"));
+  if (!state || !cookieState || state.nonce !== cookieState.nonce) return res.status(400).send("Discord login state expired or invalid. Please try again.");
+  clearStateCookie(res);
+  const code = String(req.query.code || "");
+  if (!code) return res.status(400).send("Discord did not return an authorization code.");
+  try {
+    const tokenResp = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET, grant_type: "authorization_code", code, redirect_uri: DISCORD_REDIRECT_URI })
+    });
+    const tokenData = await tokenResp.json();
+    if (!tokenResp.ok || !tokenData.access_token) throw new Error("Discord token exchange failed.");
+    const userResp = await fetch("https://discord.com/api/users/@me", { headers: { Authorization: `Bearer ${tokenData.access_token}` } });
+    const user = await userResp.json();
+    if (!userResp.ok || !user.id) throw new Error("Discord identity lookup failed.");
+
+    const discordId = String(user.id);
+    const displayName = String(user.global_name || user.username || "Discord user").slice(0, 120);
+    const avatarUrl = user.avatar ? `https://cdn.discordapp.com/avatars/${discordId}/${user.avatar}.png?size=128` : null;
+    const client = await pool.connect();
+    let accountId;
+    try {
+      await client.query("BEGIN");
+      const linked = await client.query("SELECT id FROM accounts WHERE discord_id=$1 FOR UPDATE", [discordId]);
+      if (linked.rows.length) {
+        accountId = linked.rows[0].id;
+      } else if (cookieState.accountId) {
+        const guest = await client.query("SELECT id, auth_provider, discord_id FROM accounts WHERE id=$1 FOR UPDATE", [cookieState.accountId]);
+        if (guest.rows.length && !guest.rows[0].discord_id) {
+          accountId = guest.rows[0].id;
+          await client.query("UPDATE accounts SET discord_id=$1, display_name=$2, avatar_url=$3, auth_provider='discord', last_login_at=NOW() WHERE id=$4", [discordId, displayName, avatarUrl, accountId]);
+        }
+      }
+      if (!accountId) {
+        accountId = crypto.randomUUID();
+        await client.query("INSERT INTO accounts (id, balance, discord_id, display_name, avatar_url, auth_provider, last_login_at) VALUES ($1,500.00,$2,$3,$4,'discord',NOW())", [accountId, discordId, displayName, avatarUrl]);
+      } else {
+        await client.query("UPDATE accounts SET display_name=$1, avatar_url=$2, auth_provider='discord', last_login_at=NOW() WHERE id=$3", [displayName, avatarUrl, accountId]);
+      }
+      const rawToken = crypto.randomBytes(32).toString("base64url");
+      const tokenHash = hashToken(rawToken);
+      await client.query("DELETE FROM sessions WHERE expires_at <= NOW() OR account_id=$1", [accountId]);
+      await client.query("INSERT INTO sessions (id, account_id, token_hash, expires_at) VALUES ($1,$2,$3,NOW()+INTERVAL '30 days')", [crypto.randomUUID(), accountId, tokenHash]);
+      await client.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'DISCORD_LOGIN',$2)", [accountId, JSON.stringify({ discordId, displayName })]);
+      await client.query("COMMIT");
+      setSessionCookie(res, rawToken);
+      res.redirect("/#markets");
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally { client.release(); }
+  } catch (e) {
+    res.status(400).send(`Discord login failed: ${e.message}`);
+  }
+});
+
+app.post("/api/logout", async (req, res) => {
+  const token = cookieValue(req, "ossper_session");
+  if (token) await pool.query("DELETE FROM sessions WHERE token_hash=$1", [hashToken(token)]);
+  clearSessionCookie(res);
+  res.json({ ok: true });
 });
 
 async function closeExpiredMarkets() {
@@ -475,7 +669,7 @@ async function closeExpiredMarkets() {
 }
 
 app.get("/api/markets", async (req, res) => {
-  const accountId = req.header("x-account-id");
+  const accountId = await requestAccountId(req);
   if (!accountId) return res.status(400).json({ error: "Missing account." });
   await ensureAccount(accountId);
   await closeExpiredMarkets();
@@ -489,7 +683,7 @@ app.get("/api/markets", async (req, res) => {
 });
 
 app.get("/api/market/:id", async (req, res) => {
-  const accountId = req.header("x-account-id");
+  const accountId = await requestAccountId(req);
   if (!accountId) return res.status(400).json({ error: "Missing account." });
   await ensureAccount(accountId);
   const snap = await marketSnapshot(Number(req.params.id), accountId);
@@ -519,7 +713,7 @@ app.post("/api/quote", async (req, res) => {
 app.post("/api/trade", async (req, res) => {
   try {
     await assertSystemActive();
-    const accountId = req.header("x-account-id");
+    const accountId = await requestAccountId(req);
     if (!accountId) return res.status(400).json({ error: "Missing account." });
     await ensureAccount(accountId);
     const snap = await executeTrade({

@@ -1,16 +1,29 @@
-# Ossper Markets v1.0
+# Ossper Markets v1.2
 
-Stable virtual-money prediction-market build.
+Virtual-money community prediction market for Ossper tournament events.
 
-## v1.0 focus
-- Darker, sharper interface with high-contrast green/red trading and P/L signals.
-- Real client-side views for Markets, Tournaments, Activity, Portfolio, Settings, and About.
-- Clear trade quote showing TOTAL DEBIT for buys and NET CREDIT for sells.
-- Position value, invested cost, and unrealized P/L.
-- User interface preferences saved locally: theme, accent, market layout, compact mode, dashboard section order.
-- Existing v0.9 server, PostgreSQL database, audit trail, liquidity engine, and global freeze are preserved.
+## v1.2 additions
+- Optional Discord OAuth identity and server-side sessions.
+- Guest mode remains available for testing.
+- Existing guest account can be linked to the Discord identity used during sign-in.
+- Account identity is server-authoritative once a session cookie exists.
+- Session tokens are stored as hashes in PostgreSQL and expire after 30 days.
+- Discord OAuth state is signed and short-lived.
+- Browser-level duplicate confirmation prompt removed; Ossper's own trade confirmation/quote is the confirmation layer.
+- Existing PostgreSQL data is preserved; migrations are additive.
 
-## Important
-Virtual money only. The current device-based account system is for testing. Real-money functionality is not enabled.
+## Discord configuration (Railway variables)
+Set these server-side in Railway Variables before enabling Discord login:
+- `DISCORD_CLIENT_ID`
+- `DISCORD_CLIENT_SECRET`
+- `DISCORD_REDIRECT_URI` = `https://ossper-markets-production.up.railway.app/auth/discord/callback`
+- `OSSPER_AUTH_SECRET` = a long random secret distinct from the admin key
 
-Do not wipe PostgreSQL when deploying this version.
+In the Discord Developer Portal, add the exact redirect URI above to the OAuth2 redirect URLs and use the `identify` scope. Never put the client secret in frontend code or GitHub.
+
+## Existing infrastructure
+- Frontend: `index.html`
+- Backend: `server.js` on Railway
+- Database: PostgreSQL
+- Admin: `admin.html`
+- Virtual money only. No real-money functionality is enabled.
