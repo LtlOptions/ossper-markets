@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS positions (
   no_contracts INTEGER NOT NULL DEFAULT 0 CHECK (no_contracts >= 0),
   yes_cost_cents BIGINT NOT NULL DEFAULT 0 CHECK (yes_cost_cents >= 0),
   no_cost_cents BIGINT NOT NULL DEFAULT 0 CHECK (no_cost_cents >= 0),
+  realized_pnl_cents BIGINT NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_id, market_id)
 );
@@ -147,6 +148,8 @@ function nextPrice(currentYes, side, action, contracts) {
 
 async function ensureSchemaAndSeed() {
   await pool.query(SCHEMA_SQL);
+  // Safe migration for databases created before realized P/L was added.
+  await pool.query(`ALTER TABLE positions ADD COLUMN IF NOT EXISTS realized_pnl_cents BIGINT NOT NULL DEFAULT 0`);
 
   const demoId = "00000000-0000-4000-8000-000000000001";
   const marketId = "00000000-0000-4000-8000-000000000101";
@@ -233,7 +236,8 @@ app.get("/api/markets", async (req, res) => {
               COALESCE(p.yes_contracts, 0) AS yes_contracts,
               COALESCE(p.no_contracts, 0) AS no_contracts,
               COALESCE(p.yes_cost_cents, 0) AS yes_cost_cents,
-              COALESCE(p.no_cost_cents, 0) AS no_cost_cents
+              COALESCE(p.no_cost_cents, 0) AS no_cost_cents,
+              COALESCE(p.realized_pnl_cents, 0) AS realized_pnl_cents
        FROM markets m
        LEFT JOIN positions p
          ON p.market_id = m.id AND p.user_id = $1
@@ -256,7 +260,14 @@ app.get("/api/markets", async (req, res) => {
           yesContracts: Number(m.yes_contracts),
           noContracts: Number(m.no_contracts),
           yesCost: dollars(m.yes_cost_cents),
-          noCost: dollars(m.no_cost_cents)
+          noCost: dollars(m.no_cost_cents),
+          yesAvgPrice: Number(m.yes_contracts) ? dollars(Math.round(Number(m.yes_cost_cents) / Number(m.yes_contracts))) : 0,
+          noAvgPrice: Number(m.no_contracts) ? dollars(Math.round(Number(m.no_cost_cents) / Number(m.no_contracts))) : 0,
+          yesValue: dollars(Number(m.yes_contracts) * Number(m.yes_price_cents)),
+          noValue: dollars(Number(m.no_contracts) * (100 - Number(m.yes_price_cents))),
+          yesUnrealizedPnl: dollars(Number(m.yes_contracts) * Number(m.yes_price_cents) - Number(m.yes_cost_cents)),
+          noUnrealizedPnl: dollars(Number(m.no_contracts) * (100 - Number(m.yes_price_cents)) - Number(m.no_cost_cents)),
+          realizedPnl: dollars(Number(m.realized_pnl_cents))
         }
       }))
     });
@@ -354,16 +365,22 @@ app.post("/api/trades", async (req, res) => {
         [newBalance, userId]
       );
 
+      const costBasisPool = side === "YES" ? Number(position.yes_cost_cents) : Number(position.no_cost_cents);
+      // Realized P/L is based on the contracts' average entry cost, not the sale proceeds.
+      const costBasisSold = Math.round(costBasisPool * qty / owned);
+      const realizedPnl = totalCents - costBasisSold;
+
       const yesContracts = Number(position.yes_contracts) - (side === "YES" ? qty : 0);
       const noContracts = Number(position.no_contracts) - (side === "NO" ? qty : 0);
-      const yesCost = Math.max(0, Number(position.yes_cost_cents) - (side === "YES" ? totalCents : 0));
-      const noCost = Math.max(0, Number(position.no_cost_cents) - (side === "NO" ? totalCents : 0));
+      const yesCost = Math.max(0, Number(position.yes_cost_cents) - (side === "YES" ? costBasisSold : 0));
+      const noCost = Math.max(0, Number(position.no_cost_cents) - (side === "NO" ? costBasisSold : 0));
+      const realizedTotal = Number(position.realized_pnl_cents) + realizedPnl;
 
       await client.query(
         `UPDATE positions
-         SET yes_contracts=$1, no_contracts=$2, yes_cost_cents=$3, no_cost_cents=$4, updated_at=NOW()
-         WHERE user_id=$5 AND market_id=$6`,
-        [yesContracts, noContracts, yesCost, noCost, userId, marketId]
+         SET yes_contracts=$1, no_contracts=$2, yes_cost_cents=$3, no_cost_cents=$4, realized_pnl_cents=$5, updated_at=NOW()
+         WHERE user_id=$6 AND market_id=$7`,
+        [yesContracts, noContracts, yesCost, noCost, realizedTotal, userId, marketId]
       );
 
       await client.query(

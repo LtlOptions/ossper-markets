@@ -38,6 +38,14 @@
     .meta { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; margin-top:15px; }
     .balance { font-size:38px; font-weight:850; margin:5px 0 22px; }
     .position { border-top:1px solid var(--line); padding:14px 0; }
+    .position-stats { color:var(--muted); font-size:12px; margin-top:5px; }
+    .position-mini { color:var(--muted); font-size:12px; margin-top:9px; }
+    .summary { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:0 0 22px; }
+    .summary-card { border:1px solid var(--line); border-radius:14px; padding:12px; background:#0d1929; }
+    .summary-label { color:var(--muted); font-size:11px; }
+    .summary-value { font-size:18px; font-weight:800; margin-top:3px; }
+    .sell { margin-top:8px; background:#211d2e; border-color:#55466f; }
+    @media(max-width:500px){ .summary{grid-template-columns:1fr;} }
     .position:first-of-type { border-top:0; }
     .pos-row { display:flex; justify-content:space-between; gap:12px; }
     .muted { color:var(--muted); }
@@ -71,6 +79,12 @@
     <aside class="panel">
       <div class="muted">AVAILABLE BALANCE</div>
       <div id="balance" class="balance">$500.00</div>
+
+      <div class="summary">
+        <div class="summary-card"><div class="summary-label">POSITION VALUE</div><div id="positionValue" class="summary-value">$0.00</div></div>
+        <div class="summary-card"><div class="summary-label">UNREALIZED P/L</div><div id="unrealized" class="summary-value">+$0.00</div></div>
+        <div class="summary-card"><div class="summary-label">REALIZED P/L</div><div id="realized" class="summary-value">+$0.00</div></div>
+      </div>
 
       <h2>Your Positions</h2>
       <div id="positions" class="muted">No open positions yet.</div>

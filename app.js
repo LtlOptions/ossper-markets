@@ -6,12 +6,18 @@
     return `$${Number(value).toFixed(2)}`;
   }
 
+  function signedMoney(value) {
+    const n = Number(value);
+    return `${n >= 0 ? "+" : "-"}$${Math.abs(n).toFixed(2)}`;
+  }
+
   function toast(message, good = true) {
     const el = $("toast");
     el.textContent = message;
     el.style.display = "block";
     el.style.borderColor = good ? "#355f4a" : "#6b3b3b";
-    setTimeout(() => { el.style.display = "none"; }, 2200);
+    clearTimeout(window.__ossperToast);
+    window.__ossperToast = setTimeout(() => { el.style.display = "none"; }, 2400);
   }
 
   async function api(url, options = {}) {
@@ -31,7 +37,10 @@
       return;
     }
 
-    container.innerHTML = markets.map(m => `
+    container.innerHTML = markets.map(m => {
+      const y = m.position.yesContracts;
+      const n = m.position.noContracts;
+      return `
       <article class="market">
         <div class="market-top">
           <div class="market-title">${escapeHtml(m.title)}</div>
@@ -43,14 +52,16 @@
           <div class="quote yes">
             <div class="quote-label">YES</div>
             <div class="price">${money(m.yesPrice)}</div>
-            <button data-buy="YES" data-market="${m.id}">Buy YES</button>
-            ${m.position.yesContracts ? `<div style="margin-top:8px" class="muted">Own ${m.position.yesContracts}</div>` : ""}
+            <button data-action="BUY" data-side="YES" data-market="${m.id}">Buy YES</button>
+            ${y ? `<button class="sell" data-action="SELL" data-side="YES" data-market="${m.id}">Sell YES</button>` : ""}
+            ${y ? `<div class="position-mini">Own ${y} · Avg ${money(m.position.yesAvgPrice)}</div>` : ""}
           </div>
           <div class="quote no">
             <div class="quote-label">NO</div>
             <div class="price">${money(m.noPrice)}</div>
-            <button data-buy="NO" data-market="${m.id}">Buy NO</button>
-            ${m.position.noContracts ? `<div style="margin-top:8px" class="muted">Own ${m.position.noContracts}</div>` : ""}
+            <button data-action="BUY" data-side="NO" data-market="${m.id}">Buy NO</button>
+            ${n ? `<button class="sell" data-action="SELL" data-side="NO" data-market="${m.id}">Sell NO</button>` : ""}
+            ${n ? `<div class="position-mini">Own ${n} · Avg ${money(m.position.noAvgPrice)}</div>` : ""}
           </div>
         </div>
 
@@ -58,25 +69,54 @@
           <span>Volume ${money(m.volume)}</span>
           <span>YES + NO = $1.00</span>
         </div>
-      </article>
-    `).join("");
+      </article>`;
+    }).join("");
 
-    container.querySelectorAll("[data-buy]").forEach(button => {
-      button.addEventListener("click", () => executeTrade(button.dataset.market, button.dataset.buy, "BUY"));
+    container.querySelectorAll("[data-action]").forEach(button => {
+      button.addEventListener("click", () => executeTrade(
+        button.dataset.market,
+        button.dataset.side,
+        button.dataset.action
+      ));
     });
   }
 
   function renderPositions() {
     const items = [];
     markets.forEach(m => {
-      if (m.position.yesContracts) {
-        items.push(`<div class="position"><div class="pos-row"><strong>YES</strong><strong>${m.position.yesContracts}</strong></div><div class="muted">${escapeHtml(m.title)}</div><div class="muted">Cost ${money(m.position.yesCost)}</div></div>`);
+      const p = m.position;
+      if (p.yesContracts) {
+        items.push(`
+          <div class="position">
+            <div class="pos-row"><strong>YES</strong><strong>${p.yesContracts}</strong></div>
+            <div class="muted">${escapeHtml(m.title)}</div>
+            <div class="position-stats">Avg ${money(p.yesAvgPrice)} · Value ${money(p.yesValue)} · P/L ${signedMoney(p.yesUnrealizedPnl)}</div>
+          </div>`);
       }
-      if (m.position.noContracts) {
-        items.push(`<div class="position"><div class="pos-row"><strong>NO</strong><strong>${m.position.noContracts}</strong></div><div class="muted">${escapeHtml(m.title)}</div><div class="muted">Cost ${money(m.position.noCost)}</div></div>`);
+      if (p.noContracts) {
+        items.push(`
+          <div class="position">
+            <div class="pos-row"><strong>NO</strong><strong>${p.noContracts}</strong></div>
+            <div class="muted">${escapeHtml(m.title)}</div>
+            <div class="position-stats">Avg ${money(p.noAvgPrice)} · Value ${money(p.noValue)} · P/L ${signedMoney(p.noUnrealizedPnl)}</div>
+          </div>`);
       }
     });
     $("positions").innerHTML = items.length ? items.join("") : "No open positions yet.";
+  }
+
+  function renderSummary() {
+    let realized = 0;
+    let unrealized = 0;
+    let value = 0;
+    markets.forEach(m => {
+      realized += Number(m.position.realizedPnl || 0);
+      unrealized += Number(m.position.yesUnrealizedPnl || 0) + Number(m.position.noUnrealizedPnl || 0);
+      value += Number(m.position.yesValue || 0) + Number(m.position.noValue || 0);
+    });
+    $("realized").textContent = signedMoney(realized);
+    $("unrealized").textContent = signedMoney(unrealized);
+    $("positionValue").textContent = money(value);
   }
 
   function renderHistory(trades) {
@@ -96,6 +136,7 @@
       markets = marketData.markets;
       renderMarkets();
       renderPositions();
+      renderSummary();
       renderHistory(history.trades);
       $("status").textContent = "Ossper engine connected ✓ · server-authoritative virtual balance";
       $("status").className = "ok";
@@ -106,8 +147,17 @@
   }
 
   async function executeTrade(marketId, side, action) {
-    const quantity = Number(prompt(`How many ${side} contracts?`, "1"));
+    const market = markets.find(m => m.id === marketId);
+    const owned = market ? Number(side === "YES" ? market.position.yesContracts : market.position.noContracts) : 0;
+    const promptText = action === "SELL"
+      ? `How many ${side} contracts do you want to sell? You own ${owned}.`
+      : `How many ${side} contracts do you want to buy?`;
+    const quantity = Number(prompt(promptText, "1"));
     if (!Number.isInteger(quantity) || quantity < 1) return;
+    if (action === "SELL" && quantity > owned) {
+      toast(`You only own ${owned} ${side} contract${owned === 1 ? "" : "s"}.`, false);
+      return;
+    }
 
     try {
       const result = await api("/api/trades", {
