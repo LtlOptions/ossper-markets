@@ -13,6 +13,7 @@ const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
 const AUTH_SECRET = process.env.OSSPER_AUTH_SECRET || ADMIN_KEY;
+const ADMIN_BOOTSTRAP_ENABLED = Boolean(ADMIN_KEY);
 const DISCORD_AUTH_ENABLED = Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET && DISCORD_REDIRECT_URI);
 
 if (!DATABASE_URL) {
@@ -69,12 +70,37 @@ function adminCookie(req) {
   return match ? decodeURIComponent(match.slice("ossper_admin=".length)) : null;
 }
 
-function adminOnly(req, res, next) {
+async function adminOnly(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "") || adminCookie(req);
   const payload = readToken(token);
-  if (!payload) return res.status(401).json({ error: "Admin authentication required." });
-  req.admin = payload;
-  next();
+  if (payload) {
+    req.admin = { ...payload, source: "admin_key" };
+    return next();
+  }
+
+  try {
+    const accountId = await sessionAccountId(req);
+    if (!accountId) return res.status(401).json({ error: "Admin authentication required." });
+    const q = await pool.query(`
+      SELECT a.id, a.discord_id, ar.role
+      FROM accounts a
+      JOIN admin_roles ar ON ar.discord_id=a.discord_id AND ar.revoked_at IS NULL
+      WHERE a.id=$1
+      ORDER BY CASE ar.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 9 END
+      LIMIT 1
+    `, [accountId]);
+    if (!q.rows.length) return res.status(403).json({ error: "Your Discord account is not an Ossper admin." });
+    req.admin = { role: q.rows[0].role, source: "discord", accountId: q.rows[0].id, discordId: q.rows[0].discord_id };
+    next();
+  } catch (e) {
+    res.status(500).json({ error: "Admin authentication check failed." });
+  }
+}
+
+async function ownerOnly(req, res, next) {
+  if (req.admin?.source === "admin_key") return next();
+  if (req.admin?.role === "owner") return next();
+  return res.status(403).json({ error: "Owner access required." });
 }
 
 function setAdminCookie(res, token) {
@@ -85,8 +111,9 @@ function hashToken(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
 }
 
-function makeAuthState(accountId = null) {
-  const payload = { nonce: crypto.randomBytes(18).toString("hex"), exp: Date.now() + 10 * 60 * 1000, accountId: accountId || null };
+function makeAuthState(accountId = null, returnTo = "/#markets") {
+  const safeReturn = returnTo === "/admin" ? "/admin" : "/#markets";
+  const payload = { nonce: crypto.randomBytes(18).toString("hex"), exp: Date.now() + 10 * 60 * 1000, accountId: accountId || null, returnTo: safeReturn };
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const sig = crypto.createHmac("sha256", AUTH_SECRET).update(body).digest("base64url");
   return `${body}.${sig}`;
@@ -258,6 +285,18 @@ async function initDb() {
       changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     INSERT INTO system_controls (id, frozen) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS admin_roles (
+      id BIGSERIAL PRIMARY KEY,
+      discord_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin',
+      granted_by TEXT NOT NULL DEFAULT 'system',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revoked_at TIMESTAMPTZ,
+      CHECK (role IN ('owner','admin'))
+    );
+    CREATE INDEX IF NOT EXISTS admin_roles_discord_idx ON admin_roles(discord_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS admin_roles_active_discord_idx ON admin_roles(discord_id) WHERE revoked_at IS NULL;
   `);
   await pool.query("DELETE FROM sessions WHERE expires_at <= NOW()");
 
@@ -566,7 +605,7 @@ app.post("/api/auth/discord/start", async (req, res) => {
   if (!DISCORD_AUTH_ENABLED) return res.status(503).json({ error: "Discord login is not configured yet." });
   const guestId = req.header("x-account-id");
   const accountId = guestId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(guestId) ? guestId : null;
-  const state = makeAuthState(accountId);
+  const state = makeAuthState(accountId, "/#markets");
   setStateCookie(res, state);
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
@@ -580,10 +619,28 @@ app.post("/api/auth/discord/start", async (req, res) => {
 
 app.get("/auth/discord", async (req, res) => {
   if (!DISCORD_AUTH_ENABLED) return res.status(503).send("Discord login is not configured yet.");
-  const state = makeAuthState(null);
+  const state = makeAuthState(null, "/#markets");
   setStateCookie(res, state);
   const params = new URLSearchParams({ client_id: DISCORD_CLIENT_ID, response_type: "code", redirect_uri: DISCORD_REDIRECT_URI, scope: "identify", state });
   res.redirect(`https://discord.com/oauth2/authorize?${params.toString()}`);
+});
+
+app.get("/auth/discord/admin", async (req, res) => {
+  if (!DISCORD_AUTH_ENABLED) return res.status(503).send("Discord login is not configured yet.");
+  const accountId = await sessionAccountId(req);
+  const state = makeAuthState(accountId, "/admin");
+  setStateCookie(res, state);
+  const params = new URLSearchParams({ client_id: DISCORD_CLIENT_ID, response_type: "code", redirect_uri: DISCORD_REDIRECT_URI, scope: "identify", state });
+  res.redirect(`https://discord.com/oauth2/authorize?${params.toString()}`);
+});
+
+app.get("/api/admin/discord/start", async (req, res) => {
+  if (!DISCORD_AUTH_ENABLED) return res.status(503).json({ error: "Discord login is not configured yet." });
+  const accountId = await sessionAccountId(req);
+  const state = makeAuthState(accountId, "/admin");
+  setStateCookie(res, state);
+  const params = new URLSearchParams({ client_id: DISCORD_CLIENT_ID, response_type: "code", redirect_uri: DISCORD_REDIRECT_URI, scope: "identify", state });
+  res.json({ url: `https://discord.com/oauth2/authorize?${params.toString()}` });
 });
 
 app.get("/auth/discord/callback", async (req, res) => {
@@ -636,7 +693,7 @@ app.get("/auth/discord/callback", async (req, res) => {
       await client.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'DISCORD_LOGIN',$2)", [accountId, JSON.stringify({ discordId, displayName })]);
       await client.query("COMMIT");
       setSessionCookie(res, rawToken);
-      res.redirect("/#markets");
+      res.redirect(cookieState.returnTo === "/admin" ? "/admin" : "/#markets");
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
@@ -735,6 +792,59 @@ app.get("/api/system", async (_req, res) => {
   res.json({ frozen: Boolean(control.frozen), reason: control.reason || '', changedAt: control.changed_at });
 });
 
+app.post("/api/admin/bootstrap", async (req, res) => {
+  if (!ADMIN_BOOTSTRAP_ENABLED) return res.status(503).json({ error: "Admin bootstrap is unavailable." });
+  const accountId = await sessionAccountId(req);
+  if (!accountId) return res.status(401).json({ error: "Sign in with Discord first." });
+  const supplied = String(req.body?.key || "");
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(ADMIN_KEY);
+  if (!supplied || a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Invalid admin key." });
+
+  const acct = await pool.query("SELECT discord_id FROM accounts WHERE id=$1", [accountId]);
+  const discordId = acct.rows[0]?.discord_id;
+  if (!discordId) return res.status(400).json({ error: "Your Ossper account is not linked to Discord." });
+
+  const ownerQ = await pool.query("SELECT id FROM admin_roles WHERE role='owner' AND revoked_at IS NULL LIMIT 1");
+  if (ownerQ.rows.length) return res.status(409).json({ error: "An Ossper owner is already configured." });
+
+  await pool.query("INSERT INTO admin_roles (discord_id, role, granted_by) VALUES ($1,'owner','bootstrap') ON CONFLICT DO NOTHING", [discordId]);
+  await pool.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'ADMIN_BOOTSTRAP',$2)", [accountId, JSON.stringify({ discordId, role: 'owner' })]);
+  res.json({ ok: true, role: "owner" });
+});
+
+app.get("/api/admin/roles", adminOnly, async (_req, res) => {
+  const q = await pool.query(`
+    SELECT ar.discord_id, ar.role, ar.granted_by, ar.created_at, a.display_name, a.avatar_url
+    FROM admin_roles ar
+    LEFT JOIN accounts a ON a.discord_id=ar.discord_id
+    WHERE ar.revoked_at IS NULL
+    ORDER BY CASE ar.role WHEN 'owner' THEN 1 ELSE 2 END, ar.created_at ASC
+  `);
+  res.json(q.rows);
+});
+
+app.post("/api/admin/roles", adminOnly, ownerOnly, async (req, res) => {
+  const discordId = String(req.body?.discordId || '').trim();
+  if (!/^\d{15,22}$/.test(discordId)) return res.status(400).json({ error: "Enter a valid Discord user ID." });
+  const existing = await pool.query("SELECT id, role FROM admin_roles WHERE discord_id=$1 AND revoked_at IS NULL", [discordId]);
+  if (existing.rows.length) return res.status(409).json({ error: "That Discord account already has an admin role." });
+  const grantedBy = req.admin?.discordId || 'admin_key';
+  const q = await pool.query("INSERT INTO admin_roles (discord_id, role, granted_by) VALUES ($1,'admin',$2) RETURNING *", [discordId, grantedBy]);
+  await pool.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'ADMIN_ROLE_GRANTED',$2)", [req.admin?.accountId || 'admin', JSON.stringify({ discordId, role: 'admin', grantedBy })]);
+  res.json({ ok: true, role: q.rows[0] });
+});
+
+app.delete("/api/admin/roles/:discordId", adminOnly, ownerOnly, async (req, res) => {
+  const discordId = String(req.params.discordId || '').trim();
+  const q = await pool.query("SELECT id, role FROM admin_roles WHERE discord_id=$1 AND revoked_at IS NULL", [discordId]);
+  if (!q.rows.length) return res.status(404).json({ error: "Active admin role not found." });
+  if (q.rows[0].role === 'owner') return res.status(400).json({ error: "The owner role cannot be revoked here." });
+  await pool.query("UPDATE admin_roles SET revoked_at=NOW() WHERE id=$1", [q.rows[0].id]);
+  await pool.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'ADMIN_ROLE_REVOKED',$2)", [req.admin?.accountId || 'admin', JSON.stringify({ discordId })]);
+  res.json({ ok: true });
+});
+
 app.post("/api/admin/login", (req, res) => {
   const supplied = String(req.body?.key || "");
   const a = Buffer.from(supplied);
@@ -747,7 +857,7 @@ app.post("/api/admin/login", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/admin/me", adminOnly, (_req, res) => res.json({ ok: true, role: "admin" }));
+app.get("/api/admin/me", adminOnly, (req, res) => res.json({ ok: true, role: req.admin?.role || "admin", source: req.admin?.source || "admin_key", discordId: req.admin?.discordId || null }));
 
 app.get("/api/admin/system", adminOnly, async (_req, res) => {
   const control = await getSystemControl();
