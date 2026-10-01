@@ -202,12 +202,11 @@ async function initDb() {
       status TEXT NOT NULL DEFAULT 'DRAFT',
       close_at TIMESTAMPTZ,
       result TEXT,
-      market_type TEXT NOT NULL DEFAULT 'BINARY',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CHECK (yes_price >= 0.01 AND yes_price <= 0.99),
       CHECK (status IN ('DRAFT','OPEN','TRADING','CLOSED','AWAITING_RESULT','RESOLVED','SETTLED','VOID')),
-      CHECK (market_type IN ('BINARY','MULTI'))
+      CHECK (result IS NULL OR result IN ('YES','NO','VOID'))
     );
 
     CREATE TABLE IF NOT EXISTS accounts (
@@ -264,31 +263,6 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS market_outcomes (
-      id BIGSERIAL PRIMARY KEY,
-      market_id INTEGER NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
-      outcome_key TEXT NOT NULL,
-      label TEXT NOT NULL,
-      price NUMERIC(10,6) NOT NULL,
-      opening_price NUMERIC(10,6) NOT NULL,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      UNIQUE (market_id, outcome_key)
-    );
-    CREATE INDEX IF NOT EXISTS market_outcomes_market_idx ON market_outcomes(market_id, sort_order);
-
-    CREATE TABLE IF NOT EXISTS notifications (
-      id BIGSERIAL PRIMARY KEY,
-      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      title TEXT NOT NULL,
-      message TEXT NOT NULL,
-      market_id INTEGER REFERENCES markets(id) ON DELETE SET NULL,
-      read_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE INDEX IF NOT EXISTS notifications_account_idx ON notifications(account_id, created_at DESC);
-    CREATE INDEX IF NOT EXISTS notifications_unread_idx ON notifications(account_id, read_at);
-
     CREATE TABLE IF NOT EXISTS ledger_entries (
       id BIGSERIAL PRIMARY KEY,
       account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -324,19 +298,64 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS admin_roles_discord_idx ON admin_roles(discord_id);
     CREATE UNIQUE INDEX IF NOT EXISTS admin_roles_active_discord_idx ON admin_roles(discord_id) WHERE revoked_at IS NULL;
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS test_runs (
+      id UUID PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      label TEXT NOT NULL DEFAULT 'Ossper Demo Test',
+      started_by TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ended_by TEXT,
+      ended_at TIMESTAMPTZ,
+      CHECK (status IN ('ACTIVE','ENDED'))
+    );
+    CREATE TABLE IF NOT EXISTS test_run_members (
+      test_run_id UUID NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (test_run_id, account_id)
+    );
+    CREATE TABLE IF NOT EXISTS test_account_snapshots (
+      test_run_id UUID NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      balance NUMERIC(18,4) NOT NULL,
+      PRIMARY KEY (test_run_id, account_id)
+    );
+    CREATE TABLE IF NOT EXISTS test_position_snapshots (
+      test_run_id UUID NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      market_id INTEGER NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+      side TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      avg_cost NUMERIC(18,6) NOT NULL,
+      realized_pnl NUMERIC(18,4) NOT NULL,
+      PRIMARY KEY (test_run_id, account_id, market_id, side)
+    );
+    CREATE TABLE IF NOT EXISTS test_market_snapshots (
+      test_run_id UUID NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+      market_id INTEGER NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+      yes_price NUMERIC(10,4) NOT NULL,
+      status TEXT NOT NULL,
+      close_at TIMESTAMPTZ,
+      result TEXT,
+      PRIMARY KEY (test_run_id, market_id)
+    );
+    CREATE TABLE IF NOT EXISTS test_match_snapshots (
+      test_run_id UUID NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+      match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      PRIMARY KEY (test_run_id, match_id)
+    );
+  `);
   await pool.query("DELETE FROM sessions WHERE expires_at <= NOW()");
-
-  // Additive migrations for existing Ossper databases. No data wipe.
-  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS market_type TEXT NOT NULL DEFAULT 'BINARY'`);
-  await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_result_check`);
-  await pool.query(`ALTER TABLE matches DROP CONSTRAINT IF EXISTS matches_format_check`);
-  await pool.query(`ALTER TABLE matches ADD CONSTRAINT matches_format_check CHECK (format IN ('1v1','2v2','PICK_EM'))`);
-  await pool.query(`ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_side_check`);
-  await pool.query(`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_side_check`);
-  await pool.query(`UPDATE markets SET market_type='BINARY' WHERE market_type IS NULL OR market_type=''`);
 
   // Safe migrations for databases created by v0.6.1.
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS match_id INTEGER REFERENCES matches(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS trades_test_run_idx ON trades(test_run_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS audit_test_run_idx ON audit_logs(test_run_id)`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS opening_yes_price NUMERIC(10,4) NOT NULL DEFAULT 0.50`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS liquidity NUMERIC(18,4) NOT NULL DEFAULT 100.00`);
   await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS discord_id TEXT`);
@@ -372,6 +391,79 @@ async function ensureAccount(accountId) {
   );
 }
 
+async function getActiveTestRun() {
+  const q = await pool.query("SELECT * FROM test_runs WHERE status='ACTIVE' ORDER BY started_at DESC LIMIT 1");
+  return q.rows[0] || null;
+}
+
+async function getActiveTestForAccount(accountId) {
+  const q = await pool.query(`
+    SELECT tr.* FROM test_runs tr
+    JOIN test_run_members m ON m.test_run_id=tr.id AND m.account_id=$1
+    WHERE tr.status='ACTIVE' ORDER BY tr.started_at DESC LIMIT 1
+  `, [accountId]);
+  return q.rows[0] || null;
+}
+
+async function assertTestParticipant(accountId) {
+  const active = await getActiveTestRun();
+  if (!active) return null;
+  const q = await pool.query("SELECT 1 FROM test_run_members WHERE test_run_id=$1 AND account_id=$2", [active.id, accountId]);
+  if (!q.rows.length) throw new Error("A controlled Ossper test is active. Your account is not enrolled in this test.");
+  return active;
+}
+
+async function testAudit(actor, action, details, testRunId = null, marketId = null) {
+  await pool.query(`INSERT INTO audit_logs (actor, action, market_id, details, test_run_id) VALUES ($1,$2,$3,$4,$5)`, [actor, action, marketId, JSON.stringify(details || {}), testRunId]);
+}
+
+async function snapshotTestState(client, runId, memberIds) {
+  const markets = await client.query("SELECT id, yes_price, status, close_at, result FROM markets");
+  for (const m of markets.rows) {
+    await client.query(`INSERT INTO test_market_snapshots (test_run_id, market_id, yes_price, status, close_at, result) VALUES ($1,$2,$3,$4,$5,$6)`, [runId, m.id, m.yes_price, m.status, m.close_at, m.result]);
+  }
+  const matches = await client.query("SELECT id, status FROM matches");
+  for (const m of matches.rows) {
+    await client.query(`INSERT INTO test_match_snapshots (test_run_id, match_id, status) VALUES ($1,$2,$3)`, [runId, m.id, m.status]);
+  }
+  for (const accountId of memberIds) {
+    const a = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [accountId]);
+    if (!a.rows.length) throw new Error(`Account ${accountId} not found.`);
+    await client.query(`INSERT INTO test_account_snapshots (test_run_id, account_id, balance) VALUES ($1,$2,$3)`, [runId, accountId, a.rows[0].balance]);
+    const positions = await client.query("SELECT market_id, side, quantity, avg_cost, realized_pnl FROM positions WHERE account_id=$1", [accountId]);
+    for (const p of positions.rows) {
+      await client.query(`INSERT INTO test_position_snapshots (test_run_id, account_id, market_id, side, quantity, avg_cost, realized_pnl) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [runId, accountId, p.market_id, p.side, p.quantity, p.avg_cost, p.realized_pnl]);
+    }
+  }
+}
+
+async function restoreTestState(client, runId) {
+  const members = await client.query("SELECT account_id FROM test_run_members WHERE test_run_id=$1", [runId]);
+  for (const row of members.rows) {
+    const snap = await client.query("SELECT balance FROM test_account_snapshots WHERE test_run_id=$1 AND account_id=$2", [runId, row.account_id]);
+    const current = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [row.account_id]);
+    if (snap.rows.length && current.rows.length) {
+      const before = Number(current.rows[0].balance);
+      const after = Number(snap.rows[0].balance);
+      await client.query("UPDATE accounts SET balance=$1 WHERE id=$2", [after, row.account_id]);
+      if (Math.abs(before-after) > 0.00005) {
+        await client.query(`INSERT INTO ledger_entries (account_id, entry_type, amount, balance_before, balance_after, reference, details, test_run_id) VALUES ($1,'TEST_END_RESTORE',$2,$3,$4,$5,$6,$7)`, [row.account_id, Number((after-before).toFixed(4)), before, after, `TEST_END_${runId}`, JSON.stringify({testRunId:runId}), runId]);
+      }
+    }
+    await client.query("DELETE FROM positions WHERE account_id=$1", [row.account_id]);
+    const ps = await client.query("SELECT market_id, side, quantity, avg_cost, realized_pnl FROM test_position_snapshots WHERE test_run_id=$1 AND account_id=$2", [runId, row.account_id]);
+    for (const p of ps.rows) {
+      await client.query(`INSERT INTO positions (account_id, market_id, side, quantity, avg_cost, realized_pnl) VALUES ($1,$2,$3,$4,$5,$6)`, [row.account_id, p.market_id, p.side, p.quantity, p.avg_cost, p.realized_pnl]);
+    }
+  }
+  const markets = await client.query("SELECT market_id, yes_price, status, close_at, result FROM test_market_snapshots WHERE test_run_id=$1", [runId]);
+  for (const m of markets.rows) {
+    await client.query("UPDATE markets SET yes_price=$1,status=$2,close_at=$3,result=$4,updated_at=NOW() WHERE id=$5", [m.yes_price,m.status,m.close_at,m.result,m.market_id]);
+  }
+  const matches = await client.query("SELECT match_id,status FROM test_match_snapshots WHERE test_run_id=$1", [runId]);
+  for (const m of matches.rows) await client.query("UPDATE matches SET status=$1,updated_at=NOW() WHERE id=$2", [m.status,m.match_id]);
+}
+
 async function getSystemControl() {
   const q = await pool.query("SELECT * FROM system_controls WHERE id=1");
   return q.rows[0] || { frozen: false, reason: '', changed_by: 'system', changed_at: null };
@@ -383,23 +475,11 @@ async function assertSystemActive() {
   return control;
 }
 
-async function addLedgerEntry(client, { accountId, entryType, amount, balanceBefore, balanceAfter, marketId = null, tradeId = null, reference = null, details = {} }) {
+async function addLedgerEntry(client, { accountId, entryType, amount, balanceBefore, balanceAfter, marketId = null, tradeId = null, reference = null, details = {}, testRunId = null }) {
   await client.query(`
-    INSERT INTO ledger_entries (account_id, entry_type, amount, balance_before, balance_after, market_id, trade_id, reference, details)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-  `, [accountId, entryType, amount, balanceBefore, balanceAfter, marketId, tradeId, reference, JSON.stringify(details)]);
-}
-
-async function addNotification(client, { accountId, type, title, message, marketId = null }) {
-  await client.query(`
-    INSERT INTO notifications (account_id, type, title, message, market_id)
-    VALUES ($1,$2,$3,$4,$5)
-  `, [accountId, type, title, message, marketId]);
-}
-
-async function notifyPositionHolders(client, marketId, type, title, message) {
-  const q = await client.query(`SELECT DISTINCT account_id FROM positions WHERE market_id=$1 AND quantity > 0`, [marketId]);
-  for (const row of q.rows) await addNotification(client, { accountId: row.account_id, type, title, message, marketId });
+    INSERT INTO ledger_entries (account_id, entry_type, amount, balance_before, balance_after, market_id, trade_id, reference, details, test_run_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+  `, [accountId, entryType, amount, balanceBefore, balanceAfter, marketId, tradeId, reference, JSON.stringify(details), testRunId]);
 }
 
 async function marketSnapshot(marketId, accountId) {
@@ -414,16 +494,32 @@ async function marketSnapshot(marketId, accountId) {
   `, [marketId]);
   if (!marketQ.rows.length) return null;
   const market = marketQ.rows[0];
+  const activeTest = await getActiveTestForAccount(accountId);
+  if (!activeTest) {
+    const anyActive = await getActiveTestRun();
+    if (anyActive) {
+      const base = await pool.query("SELECT yes_price,status,close_at,result FROM test_market_snapshots WHERE test_run_id=$1 AND market_id=$2", [anyActive.id, marketId]);
+      if (base.rows.length) Object.assign(market, base.rows[0]);
+    }
+  }
+
   const positionsQ = await pool.query(
     "SELECT side, quantity, avg_cost, realized_pnl FROM positions WHERE account_id=$1 AND market_id=$2 AND quantity > 0 ORDER BY side",
     [accountId, marketId]
   );
-  const tradesQ = await pool.query(
-    "SELECT action, side, quantity, price, gross, fee, created_at FROM trades WHERE account_id=$1 AND market_id=$2 ORDER BY id DESC LIMIT 30",
-    [accountId, marketId]
-  );
-  const volumeQ = await pool.query("SELECT COALESCE(SUM(gross),0) AS volume FROM trades WHERE market_id=$1", [marketId]);
-  const outcomesQ = await pool.query("SELECT outcome_key, label, price, opening_price, sort_order FROM market_outcomes WHERE market_id=$1 ORDER BY sort_order, id", [marketId]);
+
+  const tradesQ = activeTest
+    ? await pool.query("SELECT action, side, quantity, price, gross, fee, created_at FROM trades WHERE account_id=$1 AND market_id=$2 AND test_run_id=$3 ORDER BY id DESC LIMIT 30", [accountId, marketId, activeTest.id])
+    : await pool.query("SELECT action, side, quantity, price, gross, fee, created_at FROM trades WHERE account_id=$1 AND market_id=$2 AND test_run_id IS NULL ORDER BY id DESC LIMIT 30", [accountId, marketId]);
+
+  const volumeQ = activeTest
+    ? await pool.query("SELECT COALESCE(SUM(gross),0) AS volume FROM trades WHERE market_id=$1 AND test_run_id=$2", [marketId, activeTest.id])
+    : await pool.query("SELECT COALESCE(SUM(gross),0) AS volume FROM trades WHERE market_id=$1 AND test_run_id IS NULL", [marketId]);
+  if (activeTest) {
+    const base = await pool.query("SELECT yes_price,status,close_at,result FROM test_market_snapshots WHERE test_run_id=$1 AND market_id=$2", [activeTest.id, marketId]);
+    if (base.rows.length && !activeTest) { /* unreachable; kept intentionally simple */ }
+  }
+
   const account = await getAccount(accountId);
   if (!account) return null;
   const yes = Number(market.yes_price);
@@ -435,13 +531,22 @@ async function marketSnapshot(marketId, accountId) {
       liquidity: Number(market.liquidity ?? 100),
       no_price: Number((1 - yes).toFixed(4)),
       volume: Number(volumeQ.rows[0].volume),
-      market_type: market.market_type || 'BINARY',
-      outcomes: outcomesQ.rows.map(o => ({ outcome_key: o.outcome_key, label: o.label, price: Number(o.price), opening_price: Number(o.opening_price), sort_order: Number(o.sort_order) }))
     },
     account: {
       balance: Number(account.balance),
-      positions: positionsQ.rows.map(p => ({ side: p.side, quantity: Number(p.quantity), avg_cost: Number(p.avg_cost), realized_pnl: Number(p.realized_pnl) })),
-      trades: tradesQ.rows.map(t => ({ ...t, quantity: Number(t.quantity), price: Number(t.price), gross: Number(t.gross), fee: Number(t.fee) }))
+      positions: positionsQ.rows.map(p => ({
+        side: p.side,
+        quantity: Number(p.quantity),
+        avg_cost: Number(p.avg_cost),
+        realized_pnl: Number(p.realized_pnl),
+      })),
+      trades: tradesQ.rows.map(t => ({
+        ...t,
+        quantity: Number(t.quantity),
+        price: Number(t.price),
+        gross: Number(t.gross),
+        fee: Number(t.fee),
+      })),
     }
   };
 }
@@ -495,60 +600,14 @@ function quoteForMarket(market, side, action, quantity) {
   };
 }
 
-function normalizeOutcomeKey(label, index) {
-  const base = String(label || `Option ${index + 1}`).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || `option-${index+1}`;
-  return `${base}-${index+1}`;
-}
-
-function projectMultiPrices(outcomes, selectedKey, action, quantity, liquidity) {
-  const rows = outcomes.map(o => ({ ...o, price: Number(o.price) }));
-  const selected = rows.find(o => o.outcome_key === selectedKey);
-  if (!selected) throw new Error('Outcome not found.');
-  const liq = Math.max(1, Number(liquidity) || 100);
-  const qty = Math.max(0, Number(quantity));
-  const direction = action === 'BUY' ? 1 : -1;
-  const notional = selected.price * qty;
-  const shift = Math.min(2.5, notional / liq);
-  const oldP = selected.price;
-  const rawNew = clampPrice(sigmoid(logit(oldP) + direction * shift));
-  const remainingOld = Math.max(0.0001, 1 - oldP);
-  const remainingNew = Math.max(0.0001, 1 - rawNew);
-  for (const o of rows) {
-    if (o.outcome_key === selectedKey) o.nextPrice = rawNew;
-    else o.nextPrice = Number((o.price * remainingNew / remainingOld).toFixed(6));
-  }
-  const sumOther = rows.filter(o=>o.outcome_key!==selectedKey).reduce((a,o)=>a+o.nextPrice,0);
-  const diff = 1 - rawNew - sumOther;
-  if (rows.length > 1) {
-    const others = rows.filter(o=>o.outcome_key!==selectedKey);
-    const target = others[others.length-1];
-    target.nextPrice = Number((target.nextPrice + diff).toFixed(6));
-  }
-  return { rows, startPrice: oldP, endPrice: rawNew, averagePrice: (oldP + rawNew) / 2 };
-}
-
-function quoteForMulti(outcomes, liquidity, side, action, quantity) {
-  const projected = projectMultiPrices(outcomes, side, action, quantity, liquidity);
-  const gross = projected.averagePrice * Number(quantity);
-  const fee = gross * 0.01;
-  return {
-    startPrice: Number(projected.startPrice.toFixed(4)),
-    endPrice: Number(projected.endPrice.toFixed(4)),
-    averagePrice: Number(projected.averagePrice.toFixed(4)),
-    gross: Number(gross.toFixed(4)),
-    fee: Number(fee.toFixed(4)),
-    total: Number((gross + fee).toFixed(4)),
-    priceMove: Number((projected.endPrice - projected.startPrice).toFixed(4)),
-    outcomePricesAfter: projected.rows.map(o => ({ outcome_key:o.outcome_key, price:Number(o.nextPrice.toFixed(6)) }))
-  };
-}
-
 async function executeTrade({ accountId, marketId, action, side, quantity }) {
   quantity = Math.floor(Number(quantity));
-  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 10000) throw new Error("Quantity must be a whole number from 1 to 10,000.");
-  side = String(side || '').toUpperCase();
-  action = String(action || '').toUpperCase();
-  if (!side || !["BUY","SELL"].includes(action)) throw new Error("Invalid trade.");
+  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 10000) {
+    throw new Error("Quantity must be a whole number from 1 to 10,000.");
+  }
+  side = String(side).toUpperCase();
+  action = String(action).toUpperCase();
+  if (!["YES","NO"].includes(side) || !["BUY","SELL"].includes(action)) throw new Error("Invalid trade.");
 
   const client = await pool.connect();
   try {
@@ -558,33 +617,29 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
     const m = await client.query("SELECT * FROM markets WHERE id=$1 FOR UPDATE", [marketId]);
     if (!m.rows.length) throw new Error("Market not found.");
     const market = m.rows[0];
-    if (!['OPEN','TRADING'].includes(market.status)) throw new Error("Trading is closed for this market.");
+    if (!["OPEN","TRADING"].includes(market.status)) throw new Error("Trading is closed for this market.");
     if (market.close_at && new Date(market.close_at).getTime() <= Date.now()) {
       await client.query("UPDATE markets SET status='CLOSED', updated_at=NOW() WHERE id=$1", [marketId]);
       throw new Error("Trading has closed for this market.");
-    }
-    if (market.market_type !== 'MULTI' && !['YES','NO'].includes(side)) throw new Error('Invalid binary market side.');
-    if (market.market_type === 'MULTI') {
-      const oq = await client.query("SELECT * FROM market_outcomes WHERE market_id=$1 ORDER BY sort_order,id FOR UPDATE", [marketId]);
-      if (!oq.rows.some(o=>o.outcome_key===side)) throw new Error('Outcome not found.');
     }
 
     const accountQ = await client.query("SELECT * FROM accounts WHERE id=$1 FOR UPDATE", [accountId]);
     if (!accountQ.rows.length) throw new Error("Account not found.");
     const account = accountQ.rows[0];
+    const activeTestQ = await client.query(`SELECT tr.id FROM test_runs tr JOIN test_run_members tm ON tm.test_run_id=tr.id AND tm.account_id=$1 WHERE tr.status='ACTIVE' ORDER BY tr.started_at DESC LIMIT 1`, [accountId]);
+    const testRunId = activeTestQ.rows[0]?.id || null;
+    const anyActiveQ = await client.query("SELECT id FROM test_runs WHERE status='ACTIVE' ORDER BY started_at DESC LIMIT 1");
+    if (anyActiveQ.rows.length && !testRunId) throw new Error("A controlled Ossper test is active. Your account is not enrolled in this test.");
 
-    let quote;
-    if (market.market_type === 'MULTI') {
-      const oq = await client.query("SELECT outcome_key, label, price FROM market_outcomes WHERE market_id=$1 ORDER BY sort_order,id", [marketId]);
-      quote = quoteForMulti(oq.rows, market.liquidity, side, action, quantity);
-    } else {
-      quote = quoteForMarket(market, side, action, quantity);
-    }
+    const quote = quoteForMarket(market, side, action, quantity);
     const price = quote.averagePrice;
     const gross = quote.gross;
     const fee = quote.fee;
 
-    const posQ = await client.query("SELECT * FROM positions WHERE account_id=$1 AND market_id=$2 AND side=$3 FOR UPDATE", [accountId, marketId, side]);
+    const posQ = await client.query(
+      "SELECT * FROM positions WHERE account_id=$1 AND market_id=$2 AND side=$3 FOR UPDATE",
+      [accountId, marketId, side]
+    );
     const current = posQ.rows[0] || { quantity: 0, avg_cost: 0, realized_pnl: 0 };
     const currentQty = Number(current.quantity);
     const currentAvg = Number(current.avg_cost);
@@ -592,12 +647,19 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
     if (action === "BUY") {
       const totalDebit = Number((gross + fee).toFixed(4));
       if (Number(account.balance) + 1e-9 < totalDebit) throw new Error("Insufficient balance.");
+      if (quantity > 10000) throw new Error("Position limit exceeded.");
+
       const newQty = currentQty + quantity;
       const newAvg = ((currentQty * currentAvg) + gross) / newQty;
       const balanceBefore = Number(account.balance);
       const balanceAfter = Number((balanceBefore - totalDebit).toFixed(4));
       await client.query("UPDATE accounts SET balance = $1 WHERE id=$2", [balanceAfter, accountId]);
-      await client.query(`INSERT INTO positions (account_id, market_id, side, quantity, avg_cost) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (account_id, market_id, side) DO UPDATE SET quantity=EXCLUDED.quantity, avg_cost=EXCLUDED.avg_cost`, [accountId, marketId, side, newQty, newAvg]);
+      await client.query(`
+        INSERT INTO positions (account_id, market_id, side, quantity, avg_cost)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (account_id, market_id, side)
+        DO UPDATE SET quantity=EXCLUDED.quantity, avg_cost=EXCLUDED.avg_cost
+      `, [accountId, marketId, side, newQty, newAvg]);
     } else {
       if (currentQty < quantity) throw new Error(`You only own ${currentQty} ${side} contracts.`);
       const netCredit = Number((gross - fee).toFixed(4));
@@ -606,26 +668,48 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
       const balanceBefore = Number(account.balance);
       const balanceAfter = Number((balanceBefore + netCredit).toFixed(4));
       await client.query("UPDATE accounts SET balance = $1 WHERE id=$2", [balanceAfter, accountId]);
-      await client.query(`INSERT INTO positions (account_id, market_id, side, quantity, avg_cost, realized_pnl) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (account_id, market_id, side) DO UPDATE SET quantity=EXCLUDED.quantity, avg_cost=EXCLUDED.avg_cost, realized_pnl=positions.realized_pnl + EXCLUDED.realized_pnl`, [accountId, marketId, side, newQty, newQty ? currentAvg : 0, realized]);
+      await client.query(`
+        INSERT INTO positions (account_id, market_id, side, quantity, avg_cost, realized_pnl)
+        VALUES ($1,$2,$3,$4,$5,$6)
+        ON CONFLICT (account_id, market_id, side)
+        DO UPDATE SET quantity=EXCLUDED.quantity, avg_cost=EXCLUDED.avg_cost, realized_pnl=positions.realized_pnl + EXCLUDED.realized_pnl
+      `, [accountId, marketId, side, newQty, newQty ? currentAvg : 0, realized]);
     }
 
-    if (market.market_type === 'MULTI') {
-      for (const o of quote.outcomePricesAfter) await client.query("UPDATE market_outcomes SET price=$1 WHERE market_id=$2 AND outcome_key=$3", [o.price, marketId, o.outcome_key]);
-    } else {
-      await client.query("UPDATE markets SET yes_price=$1, updated_at=NOW() WHERE id=$2", [quote.yesPriceAfter, marketId]);
-    }
-    await client.query("UPDATE markets SET updated_at=NOW() WHERE id=$1", [marketId]);
+    const nextYes = quote.yesPriceAfter;
+    await client.query("UPDATE markets SET yes_price=$1, updated_at=NOW() WHERE id=$2", [nextYes, marketId]);
 
-    const tradeQ = await client.query(`INSERT INTO trades (account_id, market_id, side, action, quantity, price, gross, fee) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, [accountId, marketId, side, action, quantity, price, gross, fee]);
+    const tradeQ = await client.query(`
+      INSERT INTO trades (account_id, market_id, side, action, quantity, price, gross, fee, test_run_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING id
+    `, [accountId, marketId, side, action, quantity, price, gross, fee, testRunId]);
+
     const ledgerAmount = action === 'BUY' ? -Number((gross + fee).toFixed(4)) : Number((gross - fee).toFixed(4));
     const balanceBeforeForLedger = Number(account.balance);
-    const balanceAfterForLedger = Number((balanceBeforeForLedger + ledgerAmount).toFixed(4));
-    await addLedgerEntry(client, { accountId, entryType: action === 'BUY' ? 'TRADE_DEBIT' : 'TRADE_CREDIT', amount: ledgerAmount, balanceBefore: balanceBeforeForLedger, balanceAfter: balanceAfterForLedger, marketId, tradeId: tradeQ.rows[0].id, reference: `${action}_${side}`, details: { side, quantity, price, gross, fee } });
-    await client.query(`INSERT INTO audit_logs (actor, action, market_id, details) VALUES ($1,$2,$3,$4)`, [accountId, `${action}_${side}`, marketId, JSON.stringify({ quantity, price, gross, fee, priceMove: quote.priceMove, marketType: market.market_type })]);
+    const balanceAfterForLedger = action === 'BUY'
+      ? Number((balanceBeforeForLedger + ledgerAmount).toFixed(4))
+      : Number((balanceBeforeForLedger + ledgerAmount).toFixed(4));
+    await addLedgerEntry(client, {
+      accountId, entryType: action === 'BUY' ? 'TRADE_DEBIT' : 'TRADE_CREDIT',
+      amount: ledgerAmount, balanceBefore: balanceBeforeForLedger, balanceAfter: balanceAfterForLedger,
+      marketId, tradeId: tradeQ.rows[0].id, reference: `${action}_${side}`,
+      details: { side, quantity, price, gross, fee }, testRunId
+    });
+
+    await client.query(`
+      INSERT INTO audit_logs (actor, action, market_id, details, test_run_id)
+      VALUES ($1,$2,$3,$4,$5)
+    `, [accountId, `${action}_${side}`, marketId, JSON.stringify({ quantity, price, gross, fee, priceMove: quote.priceMove, yesPriceAfter: quote.yesPriceAfter, liquidity: Number(market.liquidity) }), testRunId]);
+
     await client.query("COMMIT");
     return await marketSnapshot(marketId, accountId);
-  } catch (e) { await client.query("ROLLBACK"); throw e; }
-  finally { client.release(); }
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 app.get("/api/health", async (_req, res) => {
@@ -780,8 +864,6 @@ async function closeExpiredMarkets() {
   `);
   for (const row of q.rows) {
     if (row.match_id) await pool.query("UPDATE matches SET status='LIVE', updated_at=NOW() WHERE id=$1", [row.match_id]);
-    const client=await pool.connect();
-    try { await client.query('BEGIN'); await notifyPositionHolders(client,row.id,'MARKET_STATUS','Trading closed','Trading has closed automatically. Your open position remains active until the market is resolved and settled.'); await client.query('COMMIT'); } catch(e){ await client.query('ROLLBACK'); } finally { client.release(); }
   }
 }
 
@@ -816,17 +898,11 @@ app.post("/api/quote", async (req, res) => {
     const action = String(req.body?.action || "BUY").toUpperCase();
     const quantity = Math.floor(Number(req.body?.quantity));
     if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 10000) throw new Error("Quantity must be a whole number from 1 to 10,000.");
-    if (!side || !["BUY","SELL"].includes(action)) throw new Error("Invalid quote.");
+    if (!["YES","NO"].includes(side) || !["BUY","SELL"].includes(action)) throw new Error("Invalid quote.");
     const q = await pool.query("SELECT * FROM markets WHERE id=$1", [marketId]);
     if (!q.rows.length) return res.status(404).json({ error: "Market not found." });
     const market = q.rows[0];
     if (!["OPEN","TRADING"].includes(market.status)) throw new Error("Trading is closed for this market.");
-    if (market.market_type === 'MULTI') {
-      const oq = await pool.query("SELECT outcome_key, label, price FROM market_outcomes WHERE market_id=$1 ORDER BY sort_order,id", [marketId]);
-      if (!oq.rows.some(o=>o.outcome_key===side)) throw new Error('Outcome not found.');
-      return res.json(quoteForMulti(oq.rows, market.liquidity, side, action, quantity));
-    }
-    if (!["YES","NO"].includes(side)) throw new Error("Invalid binary market side.");
     res.json(quoteForMarket(market, side, action, quantity));
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -850,27 +926,6 @@ app.post("/api/trade", async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
-});
-
-app.get("/api/notifications", async (req, res) => {
-  const accountId = await requestAccountId(req);
-  if (!accountId) return res.status(400).json({ error: "Missing account." });
-  await ensureAccount(accountId);
-  const q = await pool.query(`SELECT id,type,title,message,market_id,read_at,created_at FROM notifications WHERE account_id=$1 ORDER BY id DESC LIMIT 50`, [accountId]);
-  const unread = q.rows.filter(x=>!x.read_at).length;
-  res.json({ notifications:q.rows, unread });
-});
-app.post("/api/notifications/:id/read", async (req, res) => {
-  const accountId = await requestAccountId(req);
-  if (!accountId) return res.status(400).json({ error: "Missing account." });
-  await pool.query("UPDATE notifications SET read_at=COALESCE(read_at,NOW()) WHERE id=$1 AND account_id=$2", [Number(req.params.id), accountId]);
-  res.json({ ok:true });
-});
-app.post("/api/notifications/read-all", async (req, res) => {
-  const accountId = await requestAccountId(req);
-  if (!accountId) return res.status(400).json({ error: "Missing account." });
-  await pool.query("UPDATE notifications SET read_at=COALESCE(read_at,NOW()) WHERE account_id=$1 AND read_at IS NULL", [accountId]);
-  res.json({ ok:true });
 });
 
 app.get("/api/system", async (_req, res) => {
@@ -989,40 +1044,62 @@ app.get("/api/admin/markets", adminOnly, async (_req, res) => {
 });
 
 app.post("/api/admin/matches", adminOnly, async (req, res) => {
-  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
-  const { eventName="Ossper Weekly", eventDay, format, sideA, sideB, scheduledAt=null, closeAt=null, yesPrice=0.50, liquidity=100, outcomes=[] } = req.body || {};
-  const day=String(eventDay||'').toUpperCase(), fmt=String(format||'').toUpperCase();
-  const event=String(eventName||'Ossper Weekly').trim(), a=String(sideA||'').trim(), b=String(sideB||'').trim();
-  const price=Number(yesPrice), depth=Number(liquidity);
-  if(!['FRIDAY','SATURDAY','SUNDAY'].includes(day)) return res.status(400).json({error:'Event day must be Friday, Saturday, or Sunday.'});
-  if(!['1V1','2V2','PICK_EM'].includes(fmt)) return res.status(400).json({error:'Format must be 1v1, 2v2, or Pick em.'});
-  if(event.length<2) return res.status(400).json({error:'Event name is required.'});
-  if(!Number.isFinite(depth)||depth<10||depth>1000000) return res.status(400).json({error:'Liquidity must be between $10 and $1,000,000.'});
-  const isMulti=fmt==='PICK_EM';
-  let names=[];
-  if(isMulti){
-    names=(Array.isArray(outcomes)?outcomes:[]).map(x=>String(x).trim()).filter(Boolean).slice(0,20);
-    if(names.length<3) return res.status(400).json({error:'Pick em markets need at least 3 outcomes.'});
-    if(new Set(names.map(x=>x.toLowerCase())).size!==names.length) return res.status(400).json({error:'Outcome names must be unique.'});
-  } else {
-    if(a.length<2||b.length<2) return res.status(400).json({error:'Both players/teams are required.'});
-    if(!Number.isFinite(price)||price<0.01||price>0.99) return res.status(400).json({error:'YES starting price must be between 0.01 and 0.99.'});
+  try { await assertSystemActive(); const activeTest = await getActiveTestRun(); if (activeTest) throw new Error("New tournament matches cannot be created while a controlled test is active."); } catch (e) { return res.status(423).json({ error: e.message }); }
+  const {
+    eventName = "Ossper Weekly",
+    eventDay,
+    format,
+    sideA,
+    sideB,
+    scheduledAt = null,
+    closeAt = null,
+    yesPrice = 0.50,
+    liquidity = 100,
+  } = req.body || {};
+
+  const day = String(eventDay || "").toUpperCase();
+  const fmt = String(format || "").toLowerCase();
+  const a = String(sideA || "").trim();
+  const b = String(sideB || "").trim();
+  const event = String(eventName || "Ossper Weekly").trim();
+  const price = Number(yesPrice);
+  const depth = Number(liquidity);
+
+  if (!["FRIDAY","SATURDAY","SUNDAY"].includes(day)) return res.status(400).json({ error: "Event day must be Friday, Saturday, or Sunday." });
+  if (!["1v1","2v2"].includes(fmt)) return res.status(400).json({ error: "Format must be 1v1 or 2v2." });
+  if (a.length < 2 || b.length < 2) return res.status(400).json({ error: "Both players/teams are required." });
+  if (event.length < 2) return res.status(400).json({ error: "Event name is required." });
+  if (!Number.isFinite(price) || price < 0.01 || price > 0.99) return res.status(400).json({ error: "YES starting price must be between 0.01 and 0.99." });
+  if (!Number.isFinite(depth) || depth < 10 || depth > 1000000) return res.status(400).json({ error: "Liquidity must be between $10 and $1,000,000." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const matchQ = await client.query(`
+      INSERT INTO matches (event_name, event_day, format, side_a_name, side_b_name, scheduled_at, status)
+      VALUES ($1,$2,$3,$4,$5,$6,'DRAFT') RETURNING *
+    `, [event, day, fmt, a, b, scheduledAt || null]);
+    const match = matchQ.rows[0];
+    const question = `Will ${a} beat ${b}?`;
+    const description = `${event} · ${day} ${fmt}`;
+    const marketQ = await client.query(`
+      INSERT INTO markets (match_id, question, description, yes_price, opening_yes_price, liquidity, status, close_at)
+      VALUES ($1,$2,$3,$4,$4,$5,'DRAFT',$6) RETURNING *
+    `, [match.id, question, description, price, depth, closeAt || null]);
+
+    await client.query(`
+      INSERT INTO audit_logs (actor, action, market_id, details)
+      VALUES ('admin','CREATE_MATCH_MARKET',$1,$2)
+    `, [marketQ.rows[0].id, JSON.stringify({ matchId: match.id, event, day, format: fmt, sideA: a, sideB: b, scheduledAt, closeAt, yesPrice: price, liquidity: depth })]);
+
+    await client.query("COMMIT");
+    res.json({ match, market: marketQ.rows[0] });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
   }
-  const client=await pool.connect();
-  try{
-    await client.query('BEGIN');
-    const matchQ=await client.query(`INSERT INTO matches (event_name,event_day,format,side_a_name,side_b_name,scheduled_at,status) VALUES ($1,$2,$3,$4,$5,$6,'DRAFT') RETURNING *`,[event,day,fmt,isMulti?names[0]:a,isMulti?names[1]:b,scheduledAt||null]);
-    const match=matchQ.rows[0];
-    const question=isMulti?'Who will win?':`Will ${a} beat ${b}?`;
-    const description=isMulti?`${event} · ${day} · Pick a winner`:`${event} · ${day} ${fmt}`;
-    const marketQ=await client.query(`INSERT INTO markets (match_id,question,description,yes_price,opening_yes_price,liquidity,status,close_at,market_type) VALUES ($1,$2,$3,$4,$4,$5,'DRAFT',$6,$7) RETURNING *`,[match.id,question,description,isMulti?1/names.length:price,depth,closeAt||null,isMulti?'MULTI':'BINARY']);
-    if(isMulti){
-      const opening=1/names.length;
-      for(let i=0;i<names.length;i++) await client.query(`INSERT INTO market_outcomes (market_id,outcome_key,label,price,opening_price,sort_order) VALUES ($1,$2,$3,$4,$4,$5)`,[marketQ.rows[0].id,normalizeOutcomeKey(names[i],i),names[i],opening,i]);
-    }
-    await client.query(`INSERT INTO audit_logs (actor,action,market_id,details) VALUES ('admin','CREATE_MATCH_MARKET',$1,$2)`,[marketQ.rows[0].id,JSON.stringify({matchId:match.id,event,day,format:fmt,sideA:a,sideB:b,scheduledAt,closeAt,yesPrice:price,liquidity:depth,marketType:isMulti?'MULTI':'BINARY',outcomes:names})]);
-    await client.query('COMMIT'); res.json({match,market:marketQ.rows[0]});
-  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message});}finally{client.release();}
 });
 
 app.post("/api/admin/matches/:id/publish", adminOnly, async (req, res) => {
@@ -1077,7 +1154,7 @@ app.post("/api/admin/matches/:id/cancel", adminOnly, async (req, res) => {
 });
 
 app.post("/api/admin/markets", adminOnly, async (req, res) => {
-  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
+  try { await assertSystemActive(); const activeTest = await getActiveTestRun(); if (activeTest) throw new Error("New markets cannot be created while a controlled test is active."); } catch (e) { return res.status(423).json({ error: e.message }); }
   const { question, description = "", yesPrice = 0.50, closeAt = null, liquidity = 100 } = req.body || {};
   if (!question || String(question).trim().length < 5) return res.status(400).json({ error: "Question is required." });
   const price = Number(yesPrice);
@@ -1107,12 +1184,6 @@ app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
   const id = Number(req.params.id);
   const q = await pool.query("UPDATE markets SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *", [status, id]);
   if (!q.rows.length) return res.status(404).json({ error: "Market not found." });
-  if (["CLOSED","AWAITING_RESULT"].includes(status)) {
-    const title = status === 'CLOSED' ? 'Trading closed' : 'Market awaiting result';
-    const message = status === 'CLOSED' ? 'Trading has closed. Your open position remains active until the market is resolved and settled.' : 'The market is waiting for an official result. Your position is still open until settlement.';
-    const client = await pool.connect();
-    try { await client.query('BEGIN'); await notifyPositionHolders(client,id,'MARKET_STATUS',title,message); await client.query('COMMIT'); } catch(e){ await client.query('ROLLBACK'); } finally { client.release(); }
-  }
   if (q.rows[0].match_id) {
     const matchStatus = status === "SETTLED" ? "COMPLETE" : status === "VOID" ? "CANCELLED" : status === "TRADING" || status === "OPEN" ? "SCHEDULED" : status === "CLOSED" || status === "AWAITING_RESULT" || status === "RESOLVED" ? "LIVE" : "DRAFT";
     await pool.query("UPDATE matches SET status=$1, updated_at=NOW() WHERE id=$2", [matchStatus, q.rows[0].match_id]);
@@ -1128,8 +1199,8 @@ app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
 
 app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
-  const result = String(req.body?.result || "").trim();
-  if (!result) return res.status(400).json({ error: "A result is required." });
+  const result = String(req.body?.result || "").toUpperCase();
+  if (!["YES","NO","VOID"].includes(result)) return res.status(400).json({ error: "Result must be YES, NO, or VOID." });
 
   const id = Number(req.params.id);
   const client = await pool.connect();
@@ -1137,15 +1208,9 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
     await client.query("BEGIN");
     const m = await client.query("SELECT * FROM markets WHERE id=$1 FOR UPDATE", [id]);
     if (!m.rows.length) throw new Error("Market not found.");
-    if (!["CLOSED","AWAITING_RESULT","RESOLVED"].includes(m.rows[0].status)) throw new Error("Close the market before entering a result.");
-    const market=m.rows[0];
-    let resultLabel=result;
-    if (market.market_type === 'MULTI') {
-      const oq=await client.query("SELECT outcome_key,label FROM market_outcomes WHERE market_id=$1 ORDER BY sort_order,id",[id]);
-      const chosen=oq.rows.find(o=>o.outcome_key===result);
-      if(!chosen) throw new Error('Choose one of the listed outcomes.');
-      resultLabel=chosen.label;
-    } else if(!['YES','NO','VOID'].includes(result)) throw new Error('Result must be YES, NO, or VOID.');
+    if (!["CLOSED","AWAITING_RESULT","RESOLVED"].includes(m.rows[0].status)) {
+      throw new Error("Close the market before entering a result.");
+    }
 
     await client.query("UPDATE markets SET result=$1, status='RESOLVED', updated_at=NOW() WHERE id=$2", [result, id]);
 
@@ -1178,14 +1243,10 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
           reference: `SETTLE_${result}`, details: { side: p.side, quantity: Number(p.quantity), result }
         });
       }
-      await addNotification(client, {
-        accountId: p.account_id,
-        type: 'SETTLEMENT',
-        title: result === 'VOID' ? 'Market voided' : 'Market settled',
-        message: result === 'VOID' ? 'Your position was returned at its cost basis because the market was voided.' : (p.side === result ? `Your position won and settled for ${Number(payout).toFixed(2)} virtual dollars.` : `Your position settled as a loss. Result: ${resultLabel}.`),
-        marketId: id
-      });
-      await client.query("UPDATE positions SET quantity=0, avg_cost=0 WHERE account_id=$1 AND market_id=$2 AND side=$3", [p.account_id, id, p.side]);
+      await client.query(
+        "UPDATE positions SET quantity=0, avg_cost=0 WHERE account_id=$1 AND market_id=$2 AND side=$3",
+        [p.account_id, id, p.side]
+      );
     }
 
     await client.query("UPDATE markets SET status='SETTLED', updated_at=NOW() WHERE id=$1", [id]);
@@ -1194,7 +1255,7 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
     await client.query(`
       INSERT INTO audit_logs (actor, action, market_id, details)
       VALUES ('admin','SETTLE_MARKET',$1,$2)
-    `, [id, JSON.stringify({ result, resultLabel, positionRows: positions.rowCount })]);
+    `, [id, JSON.stringify({ result, positionRows: positions.rowCount })]);
 
     await client.query("COMMIT");
     res.json({ ok: true, result, settled: positions.rowCount });
@@ -1210,8 +1271,7 @@ app.get("/api/admin/matches", adminOnly, async (_req, res) => {
   const q = await pool.query(`
     SELECT mt.*, m.id AS market_id, m.status AS market_status, m.yes_price, m.close_at, m.result,
       COALESCE((SELECT SUM(gross) FROM trades t WHERE t.market_id=m.id),0) AS volume,
-      COALESCE((SELECT COUNT(*) FROM trades t WHERE t.market_id=m.id),0) AS trade_count,
-      COALESCE((SELECT json_agg(json_build_object('outcome_key',mo.outcome_key,'label',mo.label,'price',mo.price,'opening_price',mo.opening_price,'sort_order',mo.sort_order) ORDER BY mo.sort_order,mo.id) FROM market_outcomes mo WHERE mo.market_id=m.id),'[]'::json) AS outcomes
+      COALESCE((SELECT COUNT(*) FROM trades t WHERE t.market_id=m.id),0) AS trade_count
     FROM matches mt
     LEFT JOIN markets m ON m.match_id=mt.id
     ORDER BY mt.id DESC
@@ -1219,23 +1279,108 @@ app.get("/api/admin/matches", adminOnly, async (_req, res) => {
   res.json(q.rows);
 });
 
-app.get("/api/admin/audit", adminOnly, async (req, res) => {
-  const page=Math.max(1,Number(req.query.page)||1);
-  const pageSize=Math.min(100,Math.max(10,Number(req.query.pageSize)||40));
-  const action=String(req.query.action||'').trim();
-  const actor=String(req.query.actor||'').trim();
-  const marketId=Number(req.query.marketId)||0;
-  const where=[],params=[];
-  if(action){if(action==='BUY'||action==='SELL'){params.push(action+'_%');where.push(`action LIKE $${params.length}`);}else if(action==='FREEZE'){params.push('GLOBAL_FREEZE_%');where.push(`action LIKE $${params.length}`);}else if(action==='STATUS'){params.push('STATUS_CHANGE');where.push(`action=$${params.length}`);}else if(action==='SETTLEMENT'){params.push('SETTLE_MARKET');where.push(`action=$${params.length}`);}else if(action==='ADMIN'){where.push(`(action NOT LIKE 'BUY_%' AND action NOT LIKE 'SELL_%' AND action NOT LIKE 'GLOBAL_FREEZE_%' AND action <> 'STATUS_CHANGE' AND action <> 'SETTLE_MARKET')`);}else{params.push(action);where.push(`action=$${params.length}`);}}
-  if(actor){params.push(`%${actor}%`);where.push(`actor ILIKE $${params.length}`);}
-  if(marketId){params.push(marketId);where.push(`market_id=$${params.length}`);}
-  const clause=where.length?`WHERE ${where.join(' AND ')}`:'';
-  const countQ=await pool.query(`SELECT COUNT(*)::int AS count FROM audit_logs ${clause}`,params);
-  params.push(pageSize,pageSize*(page-1));
-  const q=await pool.query(`SELECT * FROM audit_logs ${clause} ORDER BY id DESC LIMIT $${params.length-1} OFFSET $${params.length}`,params);
-  res.json({rows:q.rows,total:countQ.rows[0].count,page,pageSize,pages:Math.max(1,Math.ceil(countQ.rows[0].count/pageSize))});
+app.get("/api/admin/audit", adminOnly, async (_req, res) => {
+  const q = await pool.query("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200");
+  res.json(q.rows);
 });
 
+
+
+app.get("/api/admin/test", adminOnly, async (_req, res) => {
+  const run = await getActiveTestRun();
+  if (!run) return res.json({ active:false });
+  const members = await pool.query(`SELECT a.id, a.discord_id, a.display_name, a.balance FROM test_run_members tm JOIN accounts a ON a.id=tm.account_id WHERE tm.test_run_id=$1 ORDER BY tm.added_at`, [run.id]);
+  const stats = await pool.query(`SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume FROM trades WHERE test_run_id=$1`, [run.id]);
+  const audits = await pool.query(`SELECT COUNT(*)::int AS events FROM audit_logs WHERE test_run_id=$1`, [run.id]);
+  return res.json({active:true, run, members:members.rows, stats:{trades:stats.rows[0].trades,volume:Number(stats.rows[0].volume),events:audits.rows[0].events}});
+});
+
+app.post("/api/admin/test/start", adminOnly, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({error:e.message}); }
+  const existing = await getActiveTestRun();
+  if (existing) return res.status(409).json({error:"A test run is already active."});
+  const discordIds = Array.isArray(req.body?.discordIds) ? req.body.discordIds.map(String).map(s=>s.trim()).filter(Boolean) : [];
+  if (!discordIds.length) return res.status(400).json({error:"Add at least one Discord user ID before starting the test."});
+  const label = String(req.body?.label || "Ossper Demo Test").slice(0,120);
+  const client = await pool.connect();
+  const runId = crypto.randomUUID();
+  try {
+    await client.query("BEGIN");
+    const accounts = await client.query("SELECT id,discord_id FROM accounts WHERE discord_id = ANY($1::text[])", [discordIds]);
+    if (accounts.rows.length !== discordIds.length) {
+      const found = new Set(accounts.rows.map(r=>r.discord_id));
+      const missing = discordIds.filter(x=>!found.has(x));
+      throw new Error(`These Discord accounts are not linked to Ossper yet: ${missing.join(', ')}`);
+    }
+    await client.query("INSERT INTO test_runs (id,status,label,started_by) VALUES ($1,'ACTIVE',$2,$3)", [runId,label,req.admin?.accountId || req.admin?.discordId || 'admin']);
+    for (const a of accounts.rows) await client.query("INSERT INTO test_run_members (test_run_id,account_id) VALUES ($1,$2)",[runId,a.id]);
+    await snapshotTestState(client, runId, accounts.rows.map(a=>a.id));
+    for (const a of accounts.rows) {
+      const beforeQ = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [a.id]);
+      const before = Number(beforeQ.rows[0].balance);
+      await client.query("UPDATE accounts SET balance=500.00 WHERE id=$1", [a.id]);
+      await client.query("DELETE FROM positions WHERE account_id=$1", [a.id]);
+      await client.query(`INSERT INTO ledger_entries (account_id,entry_type,amount,balance_before,balance_after,reference,details,test_run_id) VALUES ($1,'TEST_START_RESET',$2,$3,500.00,$4,$5,$6)`, [a.id, Number((500-before).toFixed(4)), before, `TEST_START_${runId}`, JSON.stringify({runId}), runId]);
+    }
+    await client.query(`INSERT INTO audit_logs (actor,action,details,test_run_id) VALUES ($1,'TEST_STARTED',$2,$3)`, [req.admin?.accountId || req.admin?.discordId || 'admin', JSON.stringify({runId,label,members:accounts.rows.length}), runId]);
+    await client.query("COMMIT");
+    res.json({ok:true,runId});
+  } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.message});} finally{client.release();}
+});
+
+app.post("/api/admin/test/end", adminOnly, async (req, res) => {
+  const run = await getActiveTestRun();
+  if (!run) return res.status(404).json({error:"No active test run."});
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const stats = await client.query("SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume FROM trades WHERE test_run_id=$1", [run.id]);
+    await restoreTestState(client, run.id);
+    await client.query("UPDATE test_runs SET status='ENDED', ended_by=$1, ended_at=NOW() WHERE id=$2", [req.admin?.accountId || req.admin?.discordId || 'admin', run.id]);
+    await client.query(`INSERT INTO audit_logs (actor,action,details,test_run_id) VALUES ($1,'TEST_ENDED',$2,$3)`, [req.admin?.accountId || req.admin?.discordId || 'admin', JSON.stringify({runId:run.id,trades:Number(stats.rows[0].trades),volume:Number(stats.rows[0].volume)}), run.id]);
+    await client.query("COMMIT");
+    res.json({ok:true,runId:run.id,trades:Number(stats.rows[0].trades),volume:Number(stats.rows[0].volume)});
+  } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.message});} finally{client.release();}
+});
+
+app.post("/api/admin/test/funds", adminOnly, async (req,res)=>{
+  const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
+  const discordId=String(req.body?.discordId||'').trim(); const amount=Number(req.body?.amount);
+  if(!/^\d{15,22}$/.test(discordId)||!Number.isFinite(amount)||amount<=0||amount>100000)return res.status(400).json({error:"Enter a valid Discord ID and amount up to $100,000."});
+  const q=await pool.query("SELECT a.id,a.balance FROM accounts a JOIN test_run_members tm ON tm.account_id=a.id WHERE tm.test_run_id=$1 AND a.discord_id=$2",[run.id,discordId]); if(!q.rows.length)return res.status(404).json({error:"That account is not enrolled in the active test."});
+  const before=Number(q.rows[0].balance),after=Number((before+amount).toFixed(4)); await pool.query("UPDATE accounts SET balance=$1 WHERE id=$2",[after,q.rows[0].id]);
+  await pool.query(`INSERT INTO ledger_entries(account_id,entry_type,amount,balance_before,balance_after,reference,details,test_run_id) VALUES($1,'TEST_FUNDS',$2,$3,$4,$5,$6,$7)`,[q.rows[0].id,amount,before,after,`TEST_FUNDS_${run.id}`,JSON.stringify({runId:run.id,discordId}),run.id]);
+  await testAudit(req.admin?.accountId||req.admin?.discordId||'admin','TEST_FUNDS_ADDED',{discordId,amount},run.id);
+  res.json({ok:true,balance:after});
+});
+
+app.post("/api/admin/test/reset-account", adminOnly, async (req,res)=>{
+  const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
+  const discordId=String(req.body?.discordId||'').trim();
+  const snap=await pool.query("SELECT account_id,balance FROM test_account_snapshots s JOIN accounts a ON a.id=s.account_id WHERE s.test_run_id=$1 AND a.discord_id=$2",[run.id,discordId]); if(!snap.rows.length)return res.status(404).json({error:"That account is not enrolled in the active test."});
+  const accountId=snap.rows[0].account_id, target=Number(snap.rows[0].balance); const currentQ=await pool.query("SELECT balance FROM accounts WHERE id=$1",[accountId]); const before=Number(currentQ.rows[0].balance); await pool.query("UPDATE accounts SET balance=$1 WHERE id=$2",[target,accountId]); await pool.query("DELETE FROM positions WHERE account_id=$1",[accountId]);
+  const ps=await pool.query("SELECT market_id,side,quantity,avg_cost,realized_pnl FROM test_position_snapshots WHERE test_run_id=$1 AND account_id=$2",[run.id,accountId]); for(const p of ps.rows) await pool.query("INSERT INTO positions(account_id,market_id,side,quantity,avg_cost,realized_pnl) VALUES($1,$2,$3,$4,$5,$6)",[accountId,p.market_id,p.side,p.quantity,p.avg_cost,p.realized_pnl]);
+  await pool.query(`INSERT INTO ledger_entries(account_id,entry_type,amount,balance_before,balance_after,reference,details,test_run_id) VALUES($1,'TEST_ACCOUNT_RESET',$2,$3,$4,$5,$6,$7)`,[accountId,Number((target-before).toFixed(4)),before,target,`TEST_RESET_${run.id}`,JSON.stringify({runId:run.id,discordId}),run.id]);
+  await testAudit(req.admin?.accountId||req.admin?.discordId||'admin','TEST_ACCOUNT_RESET',{discordId,before,after:target},run.id); res.json({ok:true,balance:target});
+});
+
+app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
+  const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
+  const members=await pool.query("SELECT a.id,a.discord_id FROM test_run_members tm JOIN accounts a ON a.id=tm.account_id WHERE tm.test_run_id=$1",[run.id]);
+  for(const a of members.rows){
+    const targetQ=await pool.query("SELECT balance FROM test_account_snapshots WHERE test_run_id=$1 AND account_id=$2",[run.id,a.id]);
+    const currentQ=await pool.query("SELECT balance FROM accounts WHERE id=$1",[a.id]);
+    const before=Number(currentQ.rows[0].balance); const target=500;
+    await pool.query("UPDATE accounts SET balance=$1 WHERE id=$2",[target,a.id]); await pool.query("DELETE FROM positions WHERE account_id=$1",[a.id]);
+    await pool.query(`INSERT INTO ledger_entries(account_id,entry_type,amount,balance_before,balance_after,reference,details,test_run_id) VALUES($1,'TEST_RESET_ALL',$2,$3,$4,$5,$6,$7)`,[a.id,Number((target-before).toFixed(4)),before,target,`TEST_RESET_ALL_${run.id}`,JSON.stringify({runId:run.id,originalBalance:targetQ.rows[0]?.balance}),run.id]);
+  }
+  await testAudit(req.admin?.accountId||req.admin?.discordId||'admin','TEST_ALL_ACCOUNTS_RESET',{members:members.rowCount},run.id);
+  res.json({ok:true,reset:members.rowCount});
+});
+
+app.get("/api/admin/test/history", adminOnly, async (_req,res)=>{const q=await pool.query(`SELECT tr.*,COALESCE((SELECT COUNT(*) FROM trades t WHERE t.test_run_id=tr.id),0)::int AS trades,COALESCE((SELECT SUM(gross) FROM trades t WHERE t.test_run_id=tr.id),0) AS volume FROM test_runs tr ORDER BY started_at DESC LIMIT 25`);res.json(q.rows.map(r=>({...r,volume:Number(r.volume)})));});
+
+app.get("/admin-test", (_req, res) => res.sendFile(path.join(publicDir, "test-admin.html")));
 app.get("/admin", (_req, res) => res.sendFile(path.join(publicDir, "admin.html")));
 app.use((_req, res) => res.sendFile(path.join(publicDir, "index.html")));
 
