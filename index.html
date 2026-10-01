@@ -31,6 +31,7 @@ async function boot(){
   render(await api("/api/markets"));
 }
 function money(n){return "$"+Number(n).toFixed(2)}
+function esc(v){return String(v??"").replace(/[&<>\"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 function render(snaps){
   if(!snaps.length){document.getElementById("app").innerHTML="<div class=card>No markets yet.</div>";return;}
   const cards=snaps.map(s=>marketCard(s)).join("");
@@ -40,11 +41,12 @@ function marketCard(s){
   const m=s.market,a=s.account,yes=Number(m.yes_price),no=Number(m.no_price);
   const pos=Object.fromEntries(a.positions.map(p=>[p.side,p]));
   return `<section class="card"><div class="market">
-    <div class="marketHead"><div class="question">${m.question}</div><div class="status">${m.status}</div></div>
-    <div class="desc">${m.description}</div>
+    <div class="marketHead"><div class="question">${esc(m.question)}</div><div class="status">${m.status}</div></div>
+    ${m.event_name?`<div class="small">${esc(m.event_name)} · ${esc(m.event_day)} · ${esc(m.format)}${m.scheduled_at?` · ${new Date(m.scheduled_at).toLocaleString()}`:""}</div>`:""}
+    <div class="desc">${m.event_name?`<b>${esc(m.event_day)} · ${esc(m.format)}</b><br>`:""}${esc(m.description)}</div>
     <div class="prices">
-      ${sideBox(m.id,"YES",yes,pos.YES)}
-      ${sideBox(m.id,"NO",no,pos.NO)}
+      ${sideBox(m.id,"YES",yes,pos.YES,m.side_a_name||"YES")}
+      ${sideBox(m.id,"NO",no,pos.NO,m.side_b_name||"NO")}
     </div>
     <div class="meta"><span>Volume ${money(m.volume)}</span><span>YES + NO = $1.00</span></div>
   </div>
@@ -55,8 +57,8 @@ function marketCard(s){
     <div class="ok">Ossper engine connected ✓ · database-backed virtual balance</div>
   </section></section>`;
 }
-function sideBox(marketId,side,price,p){
- return `<div class="side ${side==="YES"?"yes":"no"}"><div class=label>${side}</div><div class=price>${money(price)}</div>
+function sideBox(marketId,side,price,p,label){
+ return `<div class="side ${side==="YES"?"yes":"no"}"><div class=label>${side} · ${esc(label)}</div><div class=price>${money(price)}</div>
  <button onclick="trade(${marketId},'${side}','BUY')">Buy ${side}</button>
  ${p&&p.quantity>0?`<button class=sell onclick="trade(${marketId},'${side}','SELL')">Sell ${side}</button>`:""}
  ${p&&p.quantity>0?`<div class=small>Own ${p.quantity} · Avg ${money(p.avg_cost)}</div>`:""}

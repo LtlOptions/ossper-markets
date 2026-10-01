@@ -1,16 +1,25 @@
-# Ossper Markets v0.6
+# Ossper Markets v0.7
 
-Virtual-money community prediction market.
+Virtual-money community prediction market for Ossper tournament outcomes.
 
-## What's new
-- PostgreSQL-backed accounts, positions, trades, markets, and audit logs.
-- Server-authoritative balance and positions.
-- Buy and sell with a 1% trading fee.
+## v0.7 — Tournament match markets
+- Admin can create Friday 1v1, Saturday 2v2, and Sunday 1v1 match markets.
+- Each match stores event name, day, format, side A, side B, scheduled time, and trading close time.
+- New match markets start as private DRAFTs and can be published from the admin panel.
+- Public users see published markets with player/team names on the YES/NO sides.
+- Trading close time is enforced server-side; expired markets are closed automatically when the market API is read or a trade is attempted.
+- Admin can publish, close, await result, resolve, and settle match markets.
+- Draft matches can be cancelled before publication.
+- Existing v0.6 standalone/demo markets remain supported.
+- Audit logs record match creation, publication, status changes, and settlement actions.
+
+## Existing engine
+- PostgreSQL-backed accounts, positions, trades, markets, matches, and audit logs.
+- Server-authoritative virtual balance.
+- Buy/sell with a 1% fee.
 - Simple automated price impact while preserving YES + NO = $1.00.
-- Market lifecycle/status controls.
-- Admin market creation, open/close controls, result entry, settlement, and audit log.
+- Winning contracts settle at $1; losing contracts at $0.
 - Temporary admin-key authentication. Discord OAuth should replace this before public launch.
-- Still virtual money only.
 
 ## Railway variables
 Required:

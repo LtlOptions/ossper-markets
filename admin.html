@@ -2,23 +2,65 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ossper Admin</title>
 <style>
-body{margin:0;background:#080d18;color:#f3f6ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:900px;margin:auto;padding:45px 20px}.box{background:#111a2b;border:1px solid #2d446a;border-radius:22px;padding:28px;margin:20px 0}h1{font-size:40px}h2{margin-top:0}input,textarea,select{width:100%;box-sizing:border-box;background:#0b1424;color:white;border:1px solid #365174;border-radius:12px;padding:14px;margin:8px 0 14px;font-size:17px}button{background:#6f39d8;color:white;border:0;border-radius:12px;padding:14px 20px;font-weight:800;font-size:16px;margin:5px 5px 5px 0}.market{border-top:1px solid #2b405f;padding:20px 0}.pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#20355a;color:#9eb8ff;margin-right:8px}.muted{color:#9aabc3}.danger{background:#7d2834}.success{color:#7ce0a5}.err{color:#ff9999}.audit{font-size:14px;border-top:1px solid #273b59;padding:10px 0}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:650px){.row{grid-template-columns:1fr}}
+:root{--bg:#080d18;--card:#111a2b;--line:#2d446a;--text:#f3f6ff;--muted:#9aabc3;--green:#7ce0a5;--purple:#7b3fe4;--danger:#7d2834}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1000px;margin:auto;padding:34px 20px 70px}h1{font-size:42px;margin:0 0 5px}.muted{color:var(--muted)}.box{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:24px;margin:20px 0}.box h2{margin-top:0}input,textarea,select{width:100%;box-sizing:border-box;background:#0b1424;color:white;border:1px solid #365174;border-radius:12px;padding:14px;margin:8px 0 14px;font-size:16px}textarea{min-height:80px;resize:vertical}button{background:var(--purple);color:white;border:0;border-radius:12px;padding:12px 17px;font-weight:800;font-size:15px;margin:5px 5px 5px 0}button.secondary{background:#20355a}button.danger{background:var(--danger)}button:disabled{opacity:.45}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}.market{border-top:1px solid #2b405f;padding:20px 0}.market:first-child{border-top:0}.pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#20355a;color:#9eb8ff;margin:2px 6px 2px 0}.green{color:var(--green)}.err{color:#ff9999}.notice{background:#0d1728;border:1px solid #2b405f;border-radius:12px;padding:13px;margin-top:10px}.actions{margin-top:10px}.small{font-size:13px}.audit{font-size:14px;border-top:1px solid #273b59;padding:10px 0}.audit:first-child{border-top:0}@media(max-width:700px){.row,.three{grid-template-columns:1fr}main{padding:24px 14px}.box{padding:18px}h1{font-size:34px}}
 </style></head>
 <body><main>
-<h1>OSSPER ADMIN</h1><div class="muted">Market controls. Virtual-money environment.</div>
+<h1>OSSPER ADMIN</h1><div class="muted">Tournament markets · virtual-money environment</div>
 <div id="login" class="box"><h2>Admin login</h2><input id="key" type="password" placeholder="Admin key"><button onclick="login()">Sign in</button><div id="loginMsg"></div></div>
 <div id="panel" style="display:none">
-<div class="box"><h2>Create market</h2><input id="q" placeholder="Question, e.g. Will Player A win Friday 1v1?"><textarea id="d" placeholder="Description"></textarea><div class=row><div><label>YES starting price</label><input id="p" type="number" min=".01" max=".99" step=".01" value=".50"></div><div><label>Close time (optional)</label><input id="close" type="datetime-local"></div></div><button onclick="createMarket()">Create draft</button><div id="createMsg"></div></div>
-<div class="box"><h2>Markets</h2><div id="markets"></div></div>
+<div class="box">
+  <h2>Create tournament match</h2>
+  <div class="notice">Create the matchup first. It stays private as a <b>DRAFT</b> until you publish it.</div>
+  <div class="row">
+    <div><label>Event name</label><input id="eventName" value="Ossper Weekly" placeholder="Ossper Weekly"></div>
+    <div><label>Day</label><select id="eventDay"><option value="FRIDAY">Friday — 1v1</option><option value="SATURDAY">Saturday — 2v2</option><option value="SUNDAY">Sunday — 1v1</option></select></div>
+  </div>
+  <div class="row">
+    <div><label>Format</label><select id="format"><option value="1v1">1v1</option><option value="2v2">2v2</option></select></div>
+    <div><label>Opening YES price</label><input id="yesPrice" type="number" min=".01" max=".99" step=".01" value=".50"></div>
+  </div>
+  <div class="row">
+    <div><label>Player / Team A</label><input id="sideA" placeholder="Player or team A"></div>
+    <div><label>Player / Team B</label><input id="sideB" placeholder="Player or team B"></div>
+  </div>
+  <div class="row">
+    <div><label>Match time (optional)</label><input id="scheduledAt" type="datetime-local"><div class="small muted">Uses your computer's local time.</div></div>
+    <div><label>Trading closes (optional)</label><input id="closeAt" type="datetime-local"><div class="small muted">Uses your computer's local time.</div></div>
+  </div>
+  <button onclick="createMatch()">Create draft match</button><span id="createMsg"></span>
+</div>
+
+<div class="box"><h2>Match markets</h2><div id="matches"></div></div>
+<div class="box"><h2>Legacy / standalone markets</h2><div id="legacyMarkets" class="muted">Loading…</div></div>
 <div class="box"><h2>Audit log</h2><div id="audit"></div></div>
 </div></main>
 <script>
 async function api(u,o={}){o.headers={...(o.headers||{}),"Content-Type":"application/json"};let r=await fetch(u,o);let d=await r.json();if(!r.ok)throw Error(d.error||"Request failed");return d}
-async function login(){try{await api("/api/admin/login",{method:"POST",body:JSON.stringify({key:document.getElementById("key").value})});document.getElementById("login").style.display="none";document.getElementById("panel").style.display="block";load()}catch(e){document.getElementById("loginMsg").innerHTML="<div class=err>"+e.message+"</div>"}}
-async function createMarket(){try{await api("/api/admin/markets",{method:"POST",body:JSON.stringify({question:q.value,description:d.value,yesPrice:Number(p.value),closeAt:close.value||null})});q.value=d.value="";load()}catch(e){createMsg.innerHTML="<div class=err>"+e.message+"</div>"}}
-function marketCard(m){return `<div class=market><h3>${m.question}</h3><div class=muted>${m.description||""}</div><p><span class=pill>${m.status}</span> YES $${Number(m.yes_price).toFixed(2)} · NO $${(1-Number(m.yes_price)).toFixed(2)} · volume $${Number(m.volume).toFixed(2)}</p>
-<button onclick="status(${m.id},'OPEN')">Open</button><button onclick="status(${m.id},'TRADING')">Trading</button><button onclick="status(${m.id},'CLOSED')">Close</button><button onclick="status(${m.id},'AWAITING_RESULT')">Await result</button><button onclick="result(${m.id},'YES')">Resolve YES</button><button onclick="result(${m.id},'NO')">Resolve NO</button><button class=danger onclick="status(${m.id},'VOID')">Void</button></div>`}
-async function status(id,s){try{await api("/api/admin/markets/"+id+"/status",{method:"POST",body:JSON.stringify({status:s})});load()}catch(e){alert(e.message)}}
-async function result(id,r){if(!confirm("Set official result to "+r+" and settle this market?"))return;try{await api("/api/admin/markets/"+id+"/result",{method:"POST",body:JSON.stringify({result:r})});load()}catch(e){alert(e.message)}}
-async function load(){try{let ms=await api("/api/admin/markets");markets.innerHTML=ms.map(marketCard).join("")||"No markets.";let a=await api("/api/admin/audit");audit.innerHTML=a.map(x=>`<div class=audit><b>${x.action}</b> · ${x.actor} · market ${x.market_id||"-"}<br><span class=muted>${new Date(x.created_at).toLocaleString()} · ${JSON.stringify(x.details)}</span></div>`).join("")}catch(e){document.getElementById("panel").innerHTML="<div class=err>"+e.message+"</div>"}}
+async function login(){try{await api("/api/admin/login",{method:"POST",body:JSON.stringify({key:document.getElementById("key").value})});document.getElementById("login").style.display="none";document.getElementById("panel").style.display="block";load()}catch(e){document.getElementById("loginMsg").innerHTML="<div class=err>"+esc(e.message)+"</div>"}}
+function esc(v){return String(v??"").replace(/[&<>\"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+function date(v){return v?new Date(v).toLocaleString():"Not set"}
+function localToIso(v){return v?new Date(v).toISOString():null}
+async function createMatch(){
+ try{
+  const body={eventName:eventName.value,eventDay:eventDay.value,format:format.value,sideA:sideA.value,sideB:sideB.value,scheduledAt:localToIso(scheduledAt.value),closeAt:localToIso(closeAt.value),yesPrice:Number(yesPrice.value)};
+  await api("/api/admin/matches",{method:"POST",body:JSON.stringify(body)});
+  sideA.value=sideB.value="";scheduledAt.value=closeAt.value="";createMsg.innerHTML=" <span class=green>Draft created ✓</span>";load();
+ }catch(e){createMsg.innerHTML=" <span class=err>"+esc(e.message)+"</span>"}
+}
+function matchCard(m){
+ const yes=Number(m.yes_price), no=1-yes;
+ const canPublish=m.status==="DRAFT";
+ return `<div class=market><h3>${esc(m.side_a_name)} <span class=muted>vs</span> ${esc(m.side_b_name)}</h3>
+ <div><span class=pill>${esc(m.event_day)}</span><span class=pill>${esc(m.format)}</span><span class=pill>${esc(m.status)}</span><span class=pill>Market ${esc(m.market_status||"-")}</span></div>
+ <p class=muted>${esc(m.event_name)} · Match time: ${esc(date(m.scheduled_at))} · Closes: ${esc(date(m.close_at))}</p>
+ <p><b>YES — ${esc(m.side_a_name)}:</b> $${yes.toFixed(2)} &nbsp; <b>NO — ${esc(m.side_b_name)}:</b> $${no.toFixed(2)} · Volume $${Number(m.volume).toFixed(2)}</p>
+ <div class=actions>${canPublish?`<button onclick="publish(${m.id})">Publish to market</button><button class=danger onclick="cancelMatch(${m.id})">Cancel draft</button>`:`<button class=secondary onclick="marketStatus(${m.market_id},'CLOSED')">Close trading</button><button class=secondary onclick="marketStatus(${m.market_id},'AWAITING_RESULT')">Await result</button><button onclick="resolveMarket(${m.market_id},'YES')">Resolve ${esc(m.side_a_name)}</button><button onclick="resolveMarket(${m.market_id},'NO')">Resolve ${esc(m.side_b_name)}</button>`}</div>
+ </div>`;
+}
+async function publish(id){if(!confirm("Publish this match to the public market?"))return;try{await api("/api/admin/matches/"+id+"/publish",{method:"POST",body:"{}"});load()}catch(e){alert(e.message)}}
+async function cancelMatch(id){if(!confirm("Cancel this unpublished draft?"))return;try{await api("/api/admin/matches/"+id+"/cancel",{method:"POST",body:"{}"});load()}catch(e){alert(e.message)}}
+async function marketStatus(id,s){try{await api("/api/admin/markets/"+id+"/status",{method:"POST",body:JSON.stringify({status:s})});load()}catch(e){alert(e.message)}}
+async function resolveMarket(id,r){if(!confirm("Settle this market as "+r+"? This pays winning contracts and closes the market."))return;try{await api("/api/admin/markets/"+id+"/result",{method:"POST",body:JSON.stringify({result:r})});load()}catch(e){alert(e.message)}}
+function legacyCard(m){return `<div class=market><h3>${esc(m.question)}</h3><div class=muted>${esc(m.description||"")}</div><p><span class=pill>${esc(m.status)}</span> YES $${Number(m.yes_price).toFixed(2)} · NO $${(1-Number(m.yes_price)).toFixed(2)} · volume $${Number(m.volume).toFixed(2)}</p><button class=secondary onclick="marketStatus(${m.id},'OPEN')">Open</button><button class=secondary onclick="marketStatus(${m.id},'TRADING')">Trading</button><button class=secondary onclick="marketStatus(${m.id},'CLOSED')">Close</button></div>`}
+async function load(){try{const [ms,matches,a]=await Promise.all([api("/api/admin/markets"),api("/api/admin/matches"),api("/api/admin/audit")]);document.getElementById("matches").innerHTML=matches.map(matchCard).join("")||"<div class=muted>No tournament matches yet.</div>";const legacy=ms.filter(m=>!m.match_id);document.getElementById("legacyMarkets").innerHTML=legacy.map(legacyCard).join("")||"No standalone markets.";document.getElementById("audit").innerHTML=a.map(x=>`<div class=audit><b>${esc(x.action)}</b> · ${esc(x.actor)} · market ${esc(x.market_id||"-")}<br><span class=muted>${esc(date(x.created_at))} · ${esc(JSON.stringify(x.details))}</span></div>`).join("")||"No audit events."}catch(e){document.getElementById("panel").innerHTML="<div class=err>"+esc(e.message)+"</div>"}}
 </script></body></html>

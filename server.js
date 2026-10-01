@@ -78,8 +78,25 @@ function setAdminCookie(res, token) {
 
 async function initDb() {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS matches (
+      id SERIAL PRIMARY KEY,
+      event_name TEXT NOT NULL DEFAULT 'Ossper Weekly',
+      event_day TEXT NOT NULL,
+      format TEXT NOT NULL,
+      side_a_name TEXT NOT NULL,
+      side_b_name TEXT NOT NULL,
+      scheduled_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'DRAFT',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (event_day IN ('FRIDAY','SATURDAY','SUNDAY')),
+      CHECK (format IN ('1v1','2v2')),
+      CHECK (status IN ('DRAFT','SCHEDULED','LIVE','COMPLETE','CANCELLED'))
+    );
+
     CREATE TABLE IF NOT EXISTS markets (
       id SERIAL PRIMARY KEY,
+      match_id INTEGER REFERENCES matches(id) ON DELETE SET NULL,
       question TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       yes_price NUMERIC(10,4) NOT NULL DEFAULT 0.50,
@@ -136,6 +153,9 @@ async function initDb() {
     );
   `);
 
+  // Safe migrations for databases created by v0.6.1.
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS match_id INTEGER REFERENCES matches(id) ON DELETE SET NULL`);
+
   const { rows } = await pool.query("SELECT id FROM markets ORDER BY id LIMIT 1");
   if (!rows.length) {
     await pool.query(`
@@ -161,7 +181,14 @@ async function ensureAccount(accountId) {
 }
 
 async function marketSnapshot(marketId, accountId) {
-  const marketQ = await pool.query("SELECT * FROM markets WHERE id=$1", [marketId]);
+  const marketQ = await pool.query(`
+    SELECT m.*,
+      mt.event_name, mt.event_day, mt.format, mt.side_a_name, mt.side_b_name,
+      mt.scheduled_at, mt.status AS match_status
+    FROM markets m
+    LEFT JOIN matches mt ON mt.id = m.match_id
+    WHERE m.id=$1
+  `, [marketId]);
   if (!marketQ.rows.length) return null;
   const market = marketQ.rows[0];
 
@@ -228,6 +255,10 @@ async function executeTrade({ accountId, marketId, action, side, quantity }) {
     if (!m.rows.length) throw new Error("Market not found.");
     const market = m.rows[0];
     if (!["OPEN","TRADING"].includes(market.status)) throw new Error("Trading is closed for this market.");
+    if (market.close_at && new Date(market.close_at).getTime() <= Date.now()) {
+      await client.query("UPDATE markets SET status='CLOSED', updated_at=NOW() WHERE id=$1", [marketId]);
+      throw new Error("Trading has closed for this market.");
+    }
 
     const accountQ = await client.query("SELECT * FROM accounts WHERE id=$1 FOR UPDATE", [accountId]);
     if (!accountQ.rows.length) throw new Error("Account not found.");
@@ -316,11 +347,26 @@ app.post("/api/session", async (_req, res) => {
   res.json({ accountId: id });
 });
 
+async function closeExpiredMarkets() {
+  const q = await pool.query(`
+    UPDATE markets
+    SET status='CLOSED', updated_at=NOW()
+    WHERE status IN ('OPEN','TRADING')
+      AND close_at IS NOT NULL
+      AND close_at <= NOW()
+    RETURNING id, match_id
+  `);
+  for (const row of q.rows) {
+    if (row.match_id) await pool.query("UPDATE matches SET status='LIVE', updated_at=NOW() WHERE id=$1", [row.match_id]);
+  }
+}
+
 app.get("/api/markets", async (req, res) => {
   const accountId = req.header("x-account-id");
   if (!accountId) return res.status(400).json({ error: "Missing account." });
   await ensureAccount(accountId);
-  const q = await pool.query("SELECT * FROM markets ORDER BY id DESC");
+  await closeExpiredMarkets();
+  const q = await pool.query("SELECT * FROM markets WHERE status <> 'DRAFT' ORDER BY id DESC");
   const out = [];
   for (const m of q.rows) {
     const snap = await marketSnapshot(m.id, accountId);
@@ -371,14 +417,122 @@ app.post("/api/admin/login", (req, res) => {
 app.get("/api/admin/me", adminOnly, (_req, res) => res.json({ ok: true, role: "admin" }));
 
 app.get("/api/admin/markets", adminOnly, async (_req, res) => {
+  await closeExpiredMarkets();
   const q = await pool.query(`
     SELECT m.*,
+      mt.event_name, mt.event_day, mt.format, mt.side_a_name, mt.side_b_name,
+      mt.scheduled_at, mt.status AS match_status,
       COALESCE((SELECT SUM(gross) FROM trades t WHERE t.market_id=m.id),0) AS volume,
       COALESCE((SELECT COUNT(*) FROM trades t WHERE t.market_id=m.id),0) AS trade_count
     FROM markets m
+    LEFT JOIN matches mt ON mt.id=m.match_id
     ORDER BY m.id DESC
   `);
   res.json(q.rows);
+});
+
+app.post("/api/admin/matches", adminOnly, async (req, res) => {
+  const {
+    eventName = "Ossper Weekly",
+    eventDay,
+    format,
+    sideA,
+    sideB,
+    scheduledAt = null,
+    closeAt = null,
+    yesPrice = 0.50,
+  } = req.body || {};
+
+  const day = String(eventDay || "").toUpperCase();
+  const fmt = String(format || "").toLowerCase();
+  const a = String(sideA || "").trim();
+  const b = String(sideB || "").trim();
+  const event = String(eventName || "Ossper Weekly").trim();
+  const price = Number(yesPrice);
+
+  if (!["FRIDAY","SATURDAY","SUNDAY"].includes(day)) return res.status(400).json({ error: "Event day must be Friday, Saturday, or Sunday." });
+  if (!["1v1","2v2"].includes(fmt)) return res.status(400).json({ error: "Format must be 1v1 or 2v2." });
+  if (a.length < 2 || b.length < 2) return res.status(400).json({ error: "Both players/teams are required." });
+  if (event.length < 2) return res.status(400).json({ error: "Event name is required." });
+  if (!Number.isFinite(price) || price < 0.01 || price > 0.99) return res.status(400).json({ error: "YES starting price must be between 0.01 and 0.99." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const matchQ = await client.query(`
+      INSERT INTO matches (event_name, event_day, format, side_a_name, side_b_name, scheduled_at, status)
+      VALUES ($1,$2,$3,$4,$5,$6,'DRAFT') RETURNING *
+    `, [event, day, fmt, a, b, scheduledAt || null]);
+    const match = matchQ.rows[0];
+    const question = `Will ${a} beat ${b}?`;
+    const description = `${event} · ${day} ${fmt}`;
+    const marketQ = await client.query(`
+      INSERT INTO markets (match_id, question, description, yes_price, status, close_at)
+      VALUES ($1,$2,$3,$4,'DRAFT',$5) RETURNING *
+    `, [match.id, question, description, price, closeAt || null]);
+
+    await client.query(`
+      INSERT INTO audit_logs (actor, action, market_id, details)
+      VALUES ('admin','CREATE_MATCH_MARKET',$1,$2)
+    `, [marketQ.rows[0].id, JSON.stringify({ matchId: match.id, event, day, format: fmt, sideA: a, sideB: b, scheduledAt, closeAt, yesPrice: price })]);
+
+    await client.query("COMMIT");
+    res.json({ match, market: marketQ.rows[0] });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/admin/matches/:id/publish", adminOnly, async (req, res) => {
+  const id = Number(req.params.id);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const q = await client.query(`
+      SELECT mt.id AS match_id, mt.status AS match_status, m.id AS market_id, m.status AS market_status
+      FROM matches mt JOIN markets m ON m.match_id=mt.id
+      WHERE mt.id=$1 FOR UPDATE OF mt, m
+    `, [id]);
+    if (!q.rows.length) throw new Error("Match not found.");
+    const row = q.rows[0];
+    if (row.match_status === "CANCELLED") throw new Error("Cancelled matches cannot be published.");
+    await client.query("UPDATE matches SET status='SCHEDULED', updated_at=NOW() WHERE id=$1", [id]);
+    await client.query("UPDATE markets SET status='TRADING', updated_at=NOW() WHERE match_id=$1", [id]);
+    await client.query(`INSERT INTO audit_logs (actor, action, market_id, details) VALUES ('admin','PUBLISH_MATCH',$1,$2)`, [row.market_id, JSON.stringify({ matchId: id })]);
+    await client.query("COMMIT");
+    res.json({ ok: true, matchId: id, marketId: row.market_id, status: "TRADING" });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/admin/matches/:id/cancel", adminOnly, async (req, res) => {
+  const id = Number(req.params.id);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const q = await client.query("SELECT mt.id, mt.status AS match_status, m.id AS market_id, m.status AS market_status FROM matches mt LEFT JOIN markets m ON m.match_id=mt.id WHERE mt.id=$1 FOR UPDATE", [id]);
+    if (!q.rows.length) throw new Error("Match not found.");
+    if (q.rows[0].match_status !== "DRAFT" || (q.rows[0].market_status && q.rows[0].market_status !== "DRAFT")) {
+      throw new Error("Only unpublished draft matches can be cancelled here.");
+    }
+    await client.query("UPDATE matches SET status='CANCELLED', updated_at=NOW() WHERE id=$1", [id]);
+    if (q.rows[0].market_id) await client.query("UPDATE markets SET status='VOID', updated_at=NOW(), result='VOID' WHERE id=$1", [q.rows[0].market_id]);
+    await client.query(`INSERT INTO audit_logs (actor, action, market_id, details) VALUES ('admin','CANCEL_MATCH',$1,$2)`, [q.rows[0].market_id, JSON.stringify({ matchId: id })]);
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 app.post("/api/admin/markets", adminOnly, async (req, res) => {
@@ -408,6 +562,10 @@ app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
   const id = Number(req.params.id);
   const q = await pool.query("UPDATE markets SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *", [status, id]);
   if (!q.rows.length) return res.status(404).json({ error: "Market not found." });
+  if (q.rows[0].match_id) {
+    const matchStatus = status === "SETTLED" ? "COMPLETE" : status === "VOID" ? "CANCELLED" : status === "TRADING" || status === "OPEN" ? "SCHEDULED" : status === "CLOSED" || status === "AWAITING_RESULT" || status === "RESOLVED" ? "LIVE" : "DRAFT";
+    await pool.query("UPDATE matches SET status=$1, updated_at=NOW() WHERE id=$2", [matchStatus, q.rows[0].match_id]);
+  }
 
   await pool.query(`
     INSERT INTO audit_logs (actor, action, market_id, details)
@@ -454,6 +612,8 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
     }
 
     await client.query("UPDATE markets SET status='SETTLED', updated_at=NOW() WHERE id=$1", [id]);
+    const matchQ = await client.query("SELECT match_id FROM markets WHERE id=$1", [id]);
+    if (matchQ.rows[0]?.match_id) await client.query("UPDATE matches SET status='COMPLETE', updated_at=NOW() WHERE id=$1", [matchQ.rows[0].match_id]);
     await client.query(`
       INSERT INTO audit_logs (actor, action, market_id, details)
       VALUES ('admin','SETTLE_MARKET',$1,$2)
@@ -467,6 +627,18 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+app.get("/api/admin/matches", adminOnly, async (_req, res) => {
+  const q = await pool.query(`
+    SELECT mt.*, m.id AS market_id, m.status AS market_status, m.yes_price, m.close_at, m.result,
+      COALESCE((SELECT SUM(gross) FROM trades t WHERE t.market_id=m.id),0) AS volume,
+      COALESCE((SELECT COUNT(*) FROM trades t WHERE t.market_id=m.id),0) AS trade_count
+    FROM matches mt
+    LEFT JOIN markets m ON m.match_id=mt.id
+    ORDER BY mt.id DESC
+  `);
+  res.json(q.rows);
 });
 
 app.get("/api/admin/audit", adminOnly, async (_req, res) => {
