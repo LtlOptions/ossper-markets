@@ -1,4 +1,4 @@
-# Ossper Markets v1.6.3 — Sandbox + Community UX
+# Ossper Markets v1.6.7 — Glass Overview Polish
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -45,3 +45,9 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Optional Include past results filter reveals completed tournaments for the selected day/format.
 - Past tournament cards expose result hints and open the existing tournament overview/results modal.
 - v1.6.4 visual polish is included.
+
+
+## v1.6.7
+- Glass/translucent tournament overview modal with subtle blue/pink depth.
+- Glass summary metrics, result rows, and open-market controls for a more cohesive Ossper visual language.
+- Keeps the existing tournament filters, past-results archive, and hover Settings behavior.
