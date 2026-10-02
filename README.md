@@ -1,4 +1,4 @@
-# Ossper Markets v1.6.7 — Glass Overview Polish
+# Ossper Markets v1.6.8 — Glass Surface Polish
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -46,6 +46,12 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Past tournament cards expose result hints and open the existing tournament overview/results modal.
 - v1.6.4 visual polish is included.
 
+
+## v1.6.8
+
+- Glass surface mode now applies across the home dashboard, cards, tournament archive, market panels, and overview surfaces.
+- Added Settings → Surface style with Glass / Solid options; Glass is the default.
+- Existing tournament filters, overview modal, settings hover behavior, and backend are unchanged.
 
 ## v1.6.7
 - Glass/translucent tournament overview modal with subtle blue/pink depth.
