@@ -83,11 +83,11 @@ async function adminOnly(req, res, next) {
     const accountId = await sessionAccountId(req);
     if (!accountId) return res.status(401).json({ error: "Admin authentication required." });
     const q = await pool.query(`
-      SELECT a.id, a.discord_id, LOWER(ar.role) AS role
+      SELECT a.id, a.discord_id, ar.role
       FROM accounts a
       JOIN admin_roles ar ON ar.discord_id=a.discord_id AND ar.revoked_at IS NULL
       WHERE a.id=$1
-      ORDER BY CASE LOWER(ar.role) WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 9 END
+      ORDER BY CASE ar.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 9 END
       LIMIT 1
     `, [accountId]);
     if (!q.rows.length) return res.status(403).json({ error: "Your Discord account is not an Ossper admin." });
@@ -100,29 +100,19 @@ async function adminOnly(req, res, next) {
 
 async function ownerOnly(req, res, next) {
   if (req.admin?.source === "admin_key") return next();
-  if (String(req.admin?.role || "").toLowerCase() === "owner") return next();
+  if (req.admin?.role === "owner") return next();
   return res.status(403).json({ error: "Owner access required." });
 }
 
 async function adminOrModerator(req, res, next) {
-  // Authenticate the request first. These routes are intentionally allowed to
-  // accept Discord-admin sessions as well as the legacy admin-key fallback.
-  if (!req.admin) {
-    return adminOnly(req, res, () => adminOrModerator(req, res, next));
-  }
   if (req.admin?.source === "admin_key") return next();
-  if (["owner","admin","moderator"].includes(String(req.admin?.role || "").toLowerCase())) return next();
+  if (["owner","admin","moderator"].includes(req.admin?.role)) return next();
   return res.status(403).json({ error: "Admin or moderator access required." });
 }
 
 async function adminOrOwner(req, res, next) {
-  // Same authentication behavior as adminOrModerator, but restricted to
-  // Owner/Admin for test infrastructure and sensitive controls.
-  if (!req.admin) {
-    return adminOnly(req, res, () => adminOrOwner(req, res, next));
-  }
   if (req.admin?.source === "admin_key") return next();
-  if (["owner","admin"].includes(String(req.admin?.role || "").toLowerCase())) return next();
+  if (["owner","admin"].includes(req.admin?.role)) return next();
   return res.status(403).json({ error: "Admin access required." });
 }
 
@@ -379,11 +369,6 @@ async function initDb() {
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS market_type TEXT NOT NULL DEFAULT 'DYNAMIC'`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS fixed_yes_price NUMERIC(10,4)`);
-  // Normalize legacy/partial-deployment values before enforcing the new CHECK constraint.
-  await pool.query(`UPDATE markets SET market_type = CASE
-    WHEN UPPER(TRIM(COALESCE(market_type, ''))) IN ('FIXED','FIXED_ODDS','FIXED ODDS') THEN 'FIXED'
-    ELSE 'DYNAMIC'
-  END WHERE market_type IS NULL OR UPPER(TRIM(market_type)) NOT IN ('DYNAMIC','FIXED')`);
   await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_market_type_check`);
   await pool.query(`ALTER TABLE markets ADD CONSTRAINT markets_market_type_check CHECK (market_type IN ('DYNAMIC','FIXED'))`);
   await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_fixed_yes_price_check`);
@@ -855,9 +840,13 @@ app.get("/api/admin/discord/start", async (req, res) => {
 
 app.get("/auth/discord/callback", async (req, res) => {
   if (!DISCORD_AUTH_ENABLED) return res.status(503).send("Discord login is not configured yet.");
+  // The OAuth state is signed and self-contained. Mobile browsers can drop the
+  // temporary state cookie during the Discord handoff, so the callback must not
+  // require that cookie to complete a valid login.
   const state = readAuthState(req.query.state);
   const cookieState = readAuthState(cookieValue(req, "ossper_oauth_state"));
-  if (!state || !cookieState || state.nonce !== cookieState.nonce) return res.status(400).send("Discord login state expired or invalid. Please try again.");
+  if (!state) return res.status(400).send("Discord login state expired or invalid. Please try again.");
+  if (cookieState && cookieState.nonce !== state.nonce) return res.status(400).send("Discord login state mismatch. Please start login again.");
   clearStateCookie(res);
   const code = String(req.query.code || "");
   if (!code) return res.status(400).send("Discord did not return an authorization code.");
@@ -1058,6 +1047,24 @@ app.post("/api/admin/bootstrap", async (req, res) => {
   res.json({ ok: true, role: "owner" });
 });
 
+app.get("/api/admin/users", adminOnly, async (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 80);
+  const params = [];
+  let where = "WHERE discord_id IS NOT NULL";
+  if (q) {
+    params.push(`%${q}%`);
+    where += " AND (display_name ILIKE $1 OR discord_id ILIKE $1)";
+  }
+  const rows = await pool.query(`
+    SELECT id, discord_id, display_name, avatar_url
+    FROM accounts ${where}
+    ORDER BY LOWER(COALESCE(display_name,'')), discord_id
+    LIMIT 20
+  `, params);
+  res.set("Cache-Control", "no-store");
+  res.json({ users: rows.rows });
+});
+
 app.get("/api/admin/roles", adminOnly, async (_req, res) => {
   const q = await pool.query(`
     SELECT ar.discord_id, ar.role, ar.granted_by, ar.created_at, a.display_name, a.avatar_url
@@ -1071,7 +1078,7 @@ app.get("/api/admin/roles", adminOnly, async (_req, res) => {
 
 app.post("/api/admin/roles", adminOnly, ownerOnly, async (req, res) => {
   const discordId = String(req.body?.discordId || '').trim();
-  const role = String(req.body?.role || 'admin').trim().toLowerCase();
+  const role = String(req.body?.role || 'admin').toLowerCase();
   if (!/^\d{15,22}$/.test(discordId)) return res.status(400).json({ error: "Enter a valid Discord user ID." });
   if (!["admin","moderator"].includes(role)) return res.status(400).json({ error: "Role must be Admin or Moderator." });
   const existing = await pool.query("SELECT id, role FROM admin_roles WHERE discord_id=$1 AND revoked_at IS NULL", [discordId]);
@@ -1104,7 +1111,14 @@ app.post("/api/admin/login", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/admin/me", adminOnly, (req, res) => res.json({ ok: true, role: req.admin?.role || "admin", source: req.admin?.source || "admin_key", discordId: req.admin?.discordId || null }));
+app.get("/api/admin/me", adminOnly, async (req, res) => {
+  let displayName = null;
+  if (req.admin?.accountId) {
+    const q = await pool.query("SELECT display_name FROM accounts WHERE id=$1", [req.admin.accountId]);
+    displayName = q.rows[0]?.display_name || null;
+  }
+  res.json({ ok: true, role: req.admin?.role || "admin", source: req.admin?.source || "admin_key", discordId: req.admin?.discordId || null, displayName });
+});
 
 app.get("/api/admin/system", adminOnly, async (_req, res) => {
   const control = await getSystemControl();
@@ -1416,8 +1430,6 @@ app.get("/api/admin/audit", adminOnly, async (req, res) => {
   if (action) { params.push(`%${action}%`); where.push(`action ILIKE $${params.length}`); }
   if (actor) { params.push(`%${actor}%`); where.push(`actor ILIKE $${params.length}`); }
   if (Number.isInteger(marketId) && marketId > 0) { params.push(marketId); where.push(`market_id=$${params.length}`); }
-  const testRunId = String(req.query.testRunId || '').trim();
-  if (testRunId) { params.push(testRunId); where.push(`CAST(test_run_id AS TEXT) ILIKE $${params.length}`); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const countQ = await pool.query(`SELECT COUNT(*)::int AS total FROM audit_logs ${whereSql}`, params);
   const total = Number(countQ.rows[0].total || 0);
@@ -1430,7 +1442,7 @@ app.get("/api/admin/audit", adminOnly, async (req, res) => {
 
 
 
-app.get("/api/admin/test", adminOnly, async (_req, res) => {
+app.get("/api/admin/test", adminOrModerator, async (_req, res) => {
   const run = await getActiveTestRun();
   if (!run) return res.json({ active:false });
   const members = await pool.query(`SELECT a.id, a.discord_id, a.display_name, a.balance FROM test_run_members tm JOIN accounts a ON a.id=tm.account_id WHERE tm.test_run_id=$1 ORDER BY tm.added_at`, [run.id]);
@@ -1439,22 +1451,14 @@ app.get("/api/admin/test", adminOnly, async (_req, res) => {
   return res.json({active:true, run, members:members.rows, stats:{trades:stats.rows[0].trades,volume:Number(stats.rows[0].volume),events:audits.rows[0].events}});
 });
 
-app.get("/api/admin/accounts", adminOnly, ownerOnly, async (req,res)=>{
+app.get("/api/admin/test/users", adminOrModerator, async (req,res)=>{
   const q=String(req.query.q||'').trim().slice(0,80);
   const params=[]; let where="WHERE discord_id IS NOT NULL";
   if(q){ params.push(`%${q}%`); where+=" AND (display_name ILIKE $1 OR discord_id ILIKE $1)"; }
   const rows=await pool.query(`SELECT id,discord_id,display_name,avatar_url FROM accounts ${where} ORDER BY LOWER(COALESCE(display_name,'')), discord_id LIMIT 20`,params);
   res.set("Cache-Control","no-store"); res.json({users:rows.rows});
 });
-
-app.get("/api/admin/test/users", adminOnly, async (req,res)=>{
-  const q=String(req.query.q||'').trim().slice(0,80);
-  const params=[]; let where="WHERE discord_id IS NOT NULL";
-  if(q){ params.push(`%${q}%`); where+=" AND (display_name ILIKE $1 OR discord_id ILIKE $1)"; }
-  const rows=await pool.query(`SELECT id,discord_id,display_name,avatar_url FROM accounts ${where} ORDER BY LOWER(COALESCE(display_name,'')), discord_id LIMIT 20`,params);
-  res.set("Cache-Control","no-store"); res.json({users:rows.rows});
-});
-app.post("/api/admin/test/start", adminOrOwner, async (req, res) => {
+app.post("/api/admin/test/start", adminOnly, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({error:e.message}); }
   const existing = await getActiveTestRun();
   if (existing) return res.status(409).json({error:"A test run is already active."});
@@ -1487,7 +1491,7 @@ app.post("/api/admin/test/start", adminOrOwner, async (req, res) => {
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.message});} finally{client.release();}
 });
 
-app.post("/api/admin/test/end", adminOrOwner, async (req, res) => {
+app.post("/api/admin/test/end", adminOnly, async (req, res) => {
   const run = await getActiveTestRun();
   if (!run) return res.status(404).json({error:"No active test run."});
   const client = await pool.connect();
@@ -1508,7 +1512,7 @@ app.post("/api/admin/test/end", adminOrOwner, async (req, res) => {
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.message});} finally{client.release();}
 });
 
-app.post("/api/admin/test/funds", adminOrOwner, async (req,res)=>{
+app.post("/api/admin/test/funds", adminOnly, async (req,res)=>{
   const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
   const discordId=String(req.body?.discordId||'').trim(); const amount=Number(req.body?.amount);
   if(!/^\d{15,22}$/.test(discordId)||!Number.isFinite(amount)||amount<=0||amount>100000)return res.status(400).json({error:"Enter a valid Discord ID and amount up to $100,000."});
@@ -1519,7 +1523,7 @@ app.post("/api/admin/test/funds", adminOrOwner, async (req,res)=>{
   res.json({ok:true,balance:after});
 });
 
-app.post("/api/admin/test/reset-account", adminOrOwner, async (req,res)=>{
+app.post("/api/admin/test/reset-account", adminOnly, async (req,res)=>{
   const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
   const discordId=String(req.body?.discordId||'').trim();
   const snap=await pool.query("SELECT account_id,balance FROM test_account_snapshots s JOIN accounts a ON a.id=s.account_id WHERE s.test_run_id=$1 AND a.discord_id=$2",[run.id,discordId]); if(!snap.rows.length)return res.status(404).json({error:"That account is not enrolled in the active test."});
@@ -1529,7 +1533,7 @@ app.post("/api/admin/test/reset-account", adminOrOwner, async (req,res)=>{
   await testAudit(req.admin?.accountId||req.admin?.discordId||'admin','TEST_ACCOUNT_RESET',{discordId,before,after:target},run.id); res.json({ok:true,balance:target});
 });
 
-app.post("/api/admin/test/reset-all", adminOrOwner, async (req,res)=>{
+app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
   const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
   const members=await pool.query("SELECT a.id,a.discord_id FROM test_run_members tm JOIN accounts a ON a.id=tm.account_id WHERE tm.test_run_id=$1",[run.id]);
   for(const a of members.rows){
@@ -1543,7 +1547,7 @@ app.post("/api/admin/test/reset-all", adminOrOwner, async (req,res)=>{
   res.json({ok:true,reset:members.rowCount});
 });
 
-app.get("/api/admin/test/history", adminOnly, async (_req,res)=>{
+app.get("/api/admin/test/history", adminOrModerator, async (_req,res)=>{
   const q=await pool.query(`SELECT tr.*,
     COALESCE((SELECT COUNT(*) FROM trades t WHERE t.test_run_id=tr.id),0)::int AS trades,
     COALESCE((SELECT SUM(gross) FROM trades t WHERE t.test_run_id=tr.id),0) AS volume
