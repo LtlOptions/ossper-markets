@@ -89,6 +89,121 @@ body[data-surface="glass"] .summaryRow{background:rgba(8,20,35,.20);border-color
 body[data-surface="glass"] .summaryGrid{background:rgba(18,38,62,.18);border-color:rgba(184,215,255,.18)}
 body[data-surface="glass"] .summaryMetric{background:rgba(9,19,33,.18)}
 body[data-surface="solid"] .homeHero,body[data-surface="solid"] .homeStat,body[data-surface="solid"] .tournamentCard,body[data-surface="solid"] .infoCard,body[data-surface="solid"] .market,body[data-surface="solid"] .settingsCard{backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* v1.6.9 — apply surface preference consistently across every public view */
+body[data-surface="glass"] .homeHero,
+body[data-surface="glass"] .homeStat,
+body[data-surface="glass"] .homeDiscord,
+body[data-surface="glass"] .homeCard,
+body[data-surface="glass"] .homeEvent,
+body[data-surface="glass"] .homeActivity,
+body[data-surface="glass"] .market,
+body[data-surface="glass"] .tournamentCard,
+body[data-surface="glass"] .infoCard,
+body[data-surface="glass"] .activity,
+body[data-surface="glass"] .positionTable,
+body[data-surface="glass"] .settingsCard,
+body[data-surface="glass"] .helpCard,
+body[data-surface="glass"] .aboutBox,
+body[data-surface="glass"] .authCard,
+body[data-surface="glass"] .welcome,
+body[data-surface="glass"] .notificationPanel,
+body[data-surface="glass"] .menu,
+body[data-surface="glass"] .filter,
+body[data-surface="glass"] .historyToggle,
+body[data-surface="glass"] .tournamentMarketLink,
+body[data-surface="glass"] .outcomeSide,
+body[data-surface="glass"] .empty,
+body[data-surface="glass"] .portfolio,
+body[data-surface="glass"] .metric,
+body[data-surface="glass"] .positionHead {
+  background:linear-gradient(135deg,rgba(255,255,255,.055),rgba(255,255,255,.012)) , rgba(9,18,31,.13) !important;
+  border-color:rgba(210,228,255,.20);
+  backdrop-filter:blur(18px) saturate(135%);
+  -webkit-backdrop-filter:blur(18px) saturate(135%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.055),0 12px 38px rgba(0,0,0,.10);
+}
+body[data-surface="glass"] .homeHero {
+  background:linear-gradient(135deg,rgba(79,145,255,.10),rgba(255,91,171,.035),rgba(255,255,255,.018)),rgba(9,18,31,.10) !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 24px 70px rgba(0,0,0,.14);
+}
+body[data-surface="glass"] .homeDiscord {
+  background:linear-gradient(145deg,rgba(79,145,255,.09),rgba(255,91,171,.035),rgba(255,255,255,.018)),rgba(9,18,31,.10) !important;
+}
+body[data-surface="glass"] .homeCard:hover,
+body[data-surface="glass"] .homeEvent:hover,
+body[data-surface="glass"] .tournamentCard:hover,
+body[data-surface="glass"] .tournamentMarketLink:hover,
+body[data-surface="glass"] .helpCard:hover {
+  background:linear-gradient(135deg,rgba(255,255,255,.085),rgba(255,255,255,.022)),rgba(9,18,31,.14) !important;
+  border-color:rgba(210,228,255,.32);
+}
+body[data-surface="glass"] .side,
+body[data-surface="glass"] .outcomeSide,
+body[data-surface="glass"] .overviewOddsBox,
+body[data-surface="glass"] .overviewPosition,
+body[data-surface="glass"] .summaryMetric,
+body[data-surface="glass"] .summaryRow,
+body[data-surface="glass"] .modalClose,
+body[data-surface="glass"] .modalMarketBtn,
+body[data-surface="glass"] .customBgInput {
+  background:rgba(255,255,255,.035) !important;
+  backdrop-filter:blur(12px) saturate(125%);
+  -webkit-backdrop-filter:blur(12px) saturate(125%);
+  border-color:rgba(210,228,255,.18);
+}
+body[data-surface="glass"] .positionRow,
+body[data-surface="glass"] .activityRow,
+body[data-surface="glass"] .notificationItem {
+  background:rgba(255,255,255,.018);
+  border-color:rgba(210,228,255,.11);
+}
+body[data-surface="glass"] .positionRow:hover,
+body[data-surface="glass"] .notificationItem:hover {
+  background:rgba(255,255,255,.045);
+}
+body[data-surface="glass"] .notificationItem.unread {
+  background:color-mix(in srgb,var(--accent) 10%,rgba(255,255,255,.02));
+}
+body[data-surface="glass"] .modalBackdrop {
+  background:rgba(2,5,12,.42);
+}
+body[data-surface="glass"] .tournamentModal,
+body[data-surface="glass"] .marketOverviewModal {
+  background:linear-gradient(135deg,rgba(79,145,255,.10),rgba(255,91,171,.045),rgba(255,255,255,.018)),rgba(8,15,26,.26) !important;
+  backdrop-filter:blur(24px) saturate(140%);
+  -webkit-backdrop-filter:blur(24px) saturate(140%);
+}
+body[data-surface="solid"] .homeHero,
+body[data-surface="solid"] .homeStat,
+body[data-surface="solid"] .homeDiscord,
+body[data-surface="solid"] .homeCard,
+body[data-surface="solid"] .homeEvent,
+body[data-surface="solid"] .homeActivity,
+body[data-surface="solid"] .market,
+body[data-surface="solid"] .tournamentCard,
+body[data-surface="solid"] .infoCard,
+body[data-surface="solid"] .activity,
+body[data-surface="solid"] .positionTable,
+body[data-surface="solid"] .settingsCard,
+body[data-surface="solid"] .helpCard,
+body[data-surface="solid"] .aboutBox,
+body[data-surface="solid"] .authCard,
+body[data-surface="solid"] .welcome,
+body[data-surface="solid"] .notificationPanel,
+body[data-surface="solid"] .menu,
+body[data-surface="solid"] .filter,
+body[data-surface="solid"] .historyToggle,
+body[data-surface="solid"] .tournamentMarketLink,
+body[data-surface="solid"] .outcomeSide,
+body[data-surface="solid"] .empty,
+body[data-surface="solid"] .portfolio,
+body[data-surface="solid"] .metric,
+body[data-surface="solid"] .positionHead {
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+
 </style>
 </head>
 <body>

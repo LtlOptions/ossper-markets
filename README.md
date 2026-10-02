@@ -1,6 +1,11 @@
-# Ossper Markets v1.6.8 — Glass Surface Polish
+# Ossper Markets v1.6.9 — Global Glass Surfaces
 
 Community prediction market for tournament events. Virtual money only.
+
+## v1.6.9 changes
+- Surface style preference now applies consistently across Home, Markets, Tournaments, Activity, Portfolio, Help, About, notifications, filters, and modal surfaces.
+- Glass mode uses translucent surfaces so the configured background/accent treatment shows through the whole public interface.
+- Solid mode remains available as the alternate surface treatment.
 
 ## v1.6 changes
 - Added a central Home page with upcoming events, highlights/activity, navigation cards, and Discord community entry point.
