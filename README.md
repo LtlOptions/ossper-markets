@@ -1,4 +1,4 @@
-# Ossper Markets v1.6.2 — Sandbox + Community UX
+# Ossper Markets v1.6.3 — Sandbox + Community UX
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -35,3 +35,5 @@ Community prediction market for tournament events. Virtual money only.
 - OSSPER_AUTH_SECRET
 
 Virtual-money demo only. Do not treat this as a real-money platform.
+
+- v1.6.3: added a compact market overview modal with open/close times, live/fixed odds, volume/depth, positions, and Buy/Sell shortcuts; clicking a market opens the overview without navigating away.
