@@ -1,6 +1,17 @@
-# Ossper Markets v1.7.5 — Navigation + Account Menu Fixes
+# Ossper Markets v1.8.0 — Weekend Test Layer
 
 Community prediction market for tournament events. Virtual money only.
+
+
+## v1.8.0 — Weekend test layer
+- Added virtual-money head-to-head wagers for eligible YES/NO markets.
+- Wagers escrow creator funds, require opponent acceptance, and settle automatically with the market result.
+- Wager balances, notifications, ledger entries, audit events, and controlled-test tagging are server-authoritative.
+- Added market probability history graphs sourced from actual trade history.
+- Added a dedicated Wagers view and challenge flow to the user app.
+- Expanded Test Control performance history with testers, trades, volume, wagers, stake totals, and duration.
+- Hardened Test Control history loading with a timeout and explicit error state instead of an endless loading state.
+- Controlled-test wagers are voided when the test ends; the existing snapshot restore returns participating balances/positions to their pre-test state.
 
 ## v1.6 changes
 - Added a central Home page with upcoming events, highlights/activity, navigation cards, and Discord community entry point.

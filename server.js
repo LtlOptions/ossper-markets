@@ -364,6 +364,30 @@ async function initDb() {
       PRIMARY KEY (test_run_id, match_id)
     );
   `);
+  await pool.query(`CREATE TABLE IF NOT EXISTS wagers (
+    id UUID PRIMARY KEY,
+    market_id INTEGER NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
+    creator_account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    opponent_account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    creator_side TEXT NOT NULL,
+    amount NUMERIC(18,4) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    winner_account_id UUID REFERENCES accounts(id) ON DELETE SET NULL,
+    test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    accepted_at TIMESTAMPTZ,
+    settled_at TIMESTAMPTZ,
+    CHECK (creator_side IN ('YES','NO')),
+    CHECK (amount > 0),
+    CHECK (status IN ('PENDING','ACCEPTED','DECLINED','CANCELLED','SETTLED','VOID'))
+  )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS wagers_creator_idx ON wagers(creator_account_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS wagers_opponent_idx ON wagers(opponent_account_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS wagers_market_idx ON wagers(market_id, created_at DESC)`);
+
+  await pool.query(`ALTER TABLE wagers ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS wagers_test_run_idx ON wagers(test_run_id)`);
+
   await pool.query("DELETE FROM sessions WHERE expires_at <= NOW()");
 
   // Safe migrations for databases created by v0.6.1.
@@ -929,6 +953,178 @@ async function closeExpiredMarkets() {
   }
 }
 
+app.get("/api/market/:id/chart", async (req, res) => {
+  try {
+    const accountId = await requestAccountId(req);
+    if (!accountId) return res.status(400).json({ error: "Missing account." });
+    await ensureAccount(accountId);
+    const marketId = Number(req.params.id);
+    const mQ = await pool.query("SELECT * FROM markets WHERE id=$1", [marketId]);
+    if (!mQ.rows.length) return res.status(404).json({ error: "Market not found." });
+    const market = mQ.rows[0];
+    const activeTest = await getActiveTestForAccount(accountId);
+    if (market.test_run_id) {
+      if (!activeTest || String(market.test_run_id) !== String(activeTest.id)) return res.status(404).json({ error: "Market not found." });
+    } else if (activeTest) {
+      // Production markets remain visible inside a controlled test, but their history is kept on the production stream.
+    }
+    const testRunId = market.test_run_id || null;
+    const tradeQ = testRunId
+      ? await pool.query(`SELECT price, side, quantity, gross, created_at FROM trades WHERE market_id=$1 AND test_run_id=$2 ORDER BY id ASC LIMIT 500`, [marketId, testRunId])
+      : await pool.query(`SELECT price, side, quantity, gross, created_at FROM trades WHERE market_id=$1 AND test_run_id IS NULL ORDER BY id ASC LIMIT 500`, [marketId]);
+    const opening = Number(market.market_type === 'FIXED' && market.fixed_yes_price != null ? market.fixed_yes_price : market.opening_yes_price || market.yes_price);
+    let cumulative = 0;
+    const points = [{ t: market.created_at, yes: Number(opening.toFixed(4)), volume: 0 }];
+    for (const t of tradeQ.rows) {
+      const sidePrice = Number(t.price);
+      const yes = t.side === 'YES' ? sidePrice : 1 - sidePrice;
+      cumulative += Number(t.gross || 0);
+      points.push({ t: t.created_at, yes: Number(yes.toFixed(4)), volume: Number(cumulative.toFixed(4)) });
+    }
+    const currentYes = Number(market.market_type === 'FIXED' && market.fixed_yes_price != null ? market.fixed_yes_price : market.yes_price);
+    if (!points.length || points[points.length - 1].yes !== Number(currentYes.toFixed(4))) {
+      points.push({ t: market.updated_at || new Date().toISOString(), yes: Number(currentYes.toFixed(4)), volume: Number(cumulative.toFixed(4)) });
+    }
+    res.set('Cache-Control','no-store');
+    res.json({ marketId, question: market.question, openingYes: opening, currentYes, points, tradeCount: tradeQ.rowCount });
+  } catch (e) {
+    res.status(500).json({ error: "Unable to load market chart." });
+  }
+});
+
+app.get("/api/wagers/users", async (req, res) => {
+  try {
+    const accountId = await requestAccountId(req);
+    if (!accountId) return res.status(400).json({ error: "Missing account." });
+    await ensureAccount(accountId);
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    if (q.length < 2) return res.json({ users: [] });
+    const activeTest = await getActiveTestForAccount(accountId);
+    const params = [`%${q}%`, accountId];
+    let sql = `SELECT a.id, a.discord_id, a.display_name FROM accounts a WHERE a.id <> $2 AND (a.display_name ILIKE $1 OR a.discord_id ILIKE $1)`;
+    if (activeTest) {
+      params.push(activeTest.id);
+      sql += ` AND EXISTS (SELECT 1 FROM test_run_members tm WHERE tm.test_run_id=$3 AND tm.account_id=a.id)`;
+    }
+    sql += ` ORDER BY LOWER(COALESCE(a.display_name,'')), a.discord_id LIMIT 15`;
+    const rows = await pool.query(sql, params);
+    res.set('Cache-Control','no-store');
+    res.json({ users: rows.rows });
+  } catch (e) {
+    res.status(500).json({ error: "Unable to search players." });
+  }
+});
+
+app.get("/api/wagers", async (req, res) => {
+  try {
+    const accountId = await requestAccountId(req);
+    if (!accountId) return res.status(400).json({ error: "Missing account." });
+    await ensureAccount(accountId);
+    const q = await pool.query(`
+      SELECT w.*, m.question, m.result, m.status AS market_status,
+        c.display_name AS creator_name, c.discord_id AS creator_discord_id,
+        o.display_name AS opponent_name, o.discord_id AS opponent_discord_id,
+        win.display_name AS winner_name
+      FROM wagers w
+      JOIN markets m ON m.id=w.market_id
+      JOIN accounts c ON c.id=w.creator_account_id
+      JOIN accounts o ON o.id=w.opponent_account_id
+      LEFT JOIN accounts win ON win.id=w.winner_account_id
+      WHERE w.creator_account_id=$1 OR w.opponent_account_id=$1
+      ORDER BY w.created_at DESC LIMIT 100`, [accountId]);
+    res.set('Cache-Control','no-store');
+    res.json({ wagers: q.rows.map(w => ({
+      ...w, amount:Number(w.amount), isCreator:String(w.creator_account_id)===String(accountId)
+    })) });
+  } catch (e) { res.status(500).json({ error: "Unable to load wagers." }); }
+});
+
+app.post("/api/wagers", async (req, res) => {
+  try {
+    await assertSystemActive();
+    const accountId = await requestAccountId(req);
+    if (!accountId) return res.status(400).json({ error: "Missing account." });
+    await ensureAccount(accountId);
+    const marketId = Number(req.body?.marketId);
+    const opponentId = String(req.body?.opponentId || '').trim();
+    const side = String(req.body?.side || '').toUpperCase();
+    const amount = Number(req.body?.amount);
+    if (!Number.isInteger(marketId) || marketId < 1) throw new Error('Choose a market.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(opponentId)) throw new Error('Choose a valid opponent.');
+    if (String(accountId).toLowerCase() === opponentId.toLowerCase()) throw new Error('You cannot wager against yourself.');
+    if (!['YES','NO'].includes(side)) throw new Error('Choose YES or NO.');
+    if (!Number.isFinite(amount) || amount < 1 || amount > 100000) throw new Error('Wager must be between $1 and $100,000.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const mQ = await client.query('SELECT * FROM markets WHERE id=$1 FOR UPDATE', [marketId]);
+      if (!mQ.rows.length) throw new Error('Market not found.');
+      const market = mQ.rows[0];
+      if (market.market_type === 'MULTI') throw new Error('Head-to-head wagers currently support YES/NO markets only.');
+      if (!['OPEN','TRADING'].includes(market.status)) throw new Error('Wagers close when market trading closes.');
+      const opponentQ = await client.query('SELECT id,display_name,discord_id FROM accounts WHERE id=$1 FOR UPDATE', [opponentId]);
+      if (!opponentQ.rows.length) throw new Error('Opponent account not found.');
+      const activeQ = await client.query(`SELECT id FROM test_runs WHERE status='ACTIVE' ORDER BY started_at DESC LIMIT 1`);
+      const testRunId = activeQ.rows[0]?.id || null;
+      if (testRunId) {
+        const members = await client.query('SELECT account_id FROM test_run_members WHERE test_run_id=$1 AND account_id=ANY($2::uuid[])',[testRunId,[accountId,opponentId]]);
+        if (members.rowCount !== 2) throw new Error('Both players must be enrolled in the active controlled test.');
+      }
+      const acctQ = await client.query('SELECT balance FROM accounts WHERE id=$1 FOR UPDATE',[accountId]);
+      const balanceBefore = Number(acctQ.rows[0].balance);
+      if (balanceBefore + 1e-9 < amount) throw new Error('Insufficient balance to lock this wager.');
+      const balanceAfter = Number((balanceBefore - amount).toFixed(4));
+      await client.query('UPDATE accounts SET balance=$1 WHERE id=$2',[balanceAfter,accountId]);
+      const wagerId = crypto.randomUUID();
+      await client.query(`INSERT INTO wagers(id,market_id,creator_account_id,opponent_account_id,creator_side,amount,status,test_run_id) VALUES($1,$2,$3,$4,$5,$6,'PENDING',$7)`,[wagerId,marketId,accountId,opponentId,side,amount,testRunId]);
+      await addLedgerEntry(client,{accountId,entryType:'WAGER_ESCROW',amount:-amount,balanceBefore,balanceAfter,marketId,reference:`WAGER_${wagerId}`,details:{wagerId,side,amount},testRunId});
+      await createNotification(client,{accountId:opponentId,type:'WAGER',title:'New Ossper wager',message:`You were challenged to a ${side} wager for $${amount.toFixed(2)} on ${market.question}.`,marketId});
+      await client.query(`INSERT INTO audit_logs(actor,action,market_id,details,test_run_id) VALUES($1,'WAGER_CREATED',$2,$3,$4)`,[accountId,marketId,JSON.stringify({wagerId,opponentId,side,amount}),testRunId]);
+      await client.query('COMMIT');
+      res.json({ok:true,wagerId});
+    } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  } catch(e) { res.status(400).json({error:e.message}); }
+});
+
+app.post("/api/wagers/:id/accept", async (req,res) => {
+  try {
+    await assertSystemActive();
+    const accountId=await requestAccountId(req); if(!accountId)return res.status(400).json({error:'Missing account.'});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const q=await client.query('SELECT w.*,m.question,m.status AS market_status FROM wagers w JOIN markets m ON m.id=w.market_id WHERE w.id=$1 FOR UPDATE',[req.params.id]);
+      if(!q.rows.length)throw new Error('Wager not found.'); const w=q.rows[0];
+      if(String(w.opponent_account_id)!==String(accountId))throw new Error('Only the challenged player can accept this wager.');
+      if(w.status!=='PENDING')throw new Error('This wager is no longer pending.');
+      if(!['OPEN','TRADING'].includes(w.market_status))throw new Error('This market is no longer accepting wagers.');
+      const acct=await client.query('SELECT balance FROM accounts WHERE id=$1 FOR UPDATE',[accountId]); const before=Number(acct.rows[0].balance); const amount=Number(w.amount); if(before+1e-9<amount)throw new Error('Insufficient balance to accept this wager.'); const after=Number((before-amount).toFixed(4));
+      await client.query('UPDATE accounts SET balance=$1 WHERE id=$2',[after,accountId]);
+      await client.query("UPDATE wagers SET status='ACCEPTED',accepted_at=NOW() WHERE id=$1",[w.id]);
+      await addLedgerEntry(client,{accountId,entryType:'WAGER_ESCROW',amount:-amount,balanceBefore:before,balanceAfter:after,marketId:w.market_id,reference:`WAGER_${w.id}`,details:{wagerId:w.id,side:w.creator_side==='YES'?'NO':'YES',amount},testRunId:w.test_run_id});
+      await createNotification(client,{accountId:w.creator_account_id,type:'WAGER',title:'Wager accepted',message:`Your $${amount.toFixed(2)} wager on ${w.question} was accepted.`,marketId:w.market_id});
+      await client.query(`INSERT INTO audit_logs(actor,action,market_id,details,test_run_id) VALUES($1,'WAGER_ACCEPTED',$2,$3,$4)`,[accountId,w.market_id,JSON.stringify({wagerId:w.id,amount}),w.test_run_id]);
+      await client.query('COMMIT'); res.json({ok:true});
+    }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+  }catch(e){res.status(400).json({error:e.message})}
+});
+
+async function cancelOrDeclineWager(req,res,mode){
+  try{
+    await assertSystemActive(); const accountId=await requestAccountId(req); if(!accountId)return res.status(400).json({error:'Missing account.'});
+    const client=await pool.connect(); try{
+      await client.query('BEGIN'); const q=await client.query('SELECT * FROM wagers WHERE id=$1 FOR UPDATE',[req.params.id]); if(!q.rows.length)throw new Error('Wager not found.'); const w=q.rows[0];
+      const allowed=mode==='CANCEL'?String(w.creator_account_id)===String(accountId):String(w.opponent_account_id)===String(accountId); if(!allowed)throw new Error(`Only the ${mode==='CANCEL'?'creator':'challenged player'} can ${mode.toLowerCase()} this wager.`); if(w.status!=='PENDING')throw new Error('This wager is no longer pending.');
+      const targetStatus=mode==='CANCEL'?'CANCELLED':'DECLINED'; const acct=await client.query('SELECT balance FROM accounts WHERE id=$1 FOR UPDATE',[w.creator_account_id]); const before=Number(acct.rows[0].balance); const after=Number((before+Number(w.amount)).toFixed(4)); await client.query('UPDATE accounts SET balance=$1 WHERE id=$2',[after,w.creator_account_id]);
+      await client.query('UPDATE wagers SET status=$1,settled_at=NOW() WHERE id=$2',[targetStatus,w.id]);
+      await addLedgerEntry(client,{accountId:w.creator_account_id,entryType:'WAGER_REFUND',amount:Number(w.amount),balanceBefore:before,balanceAfter:after,marketId:w.market_id,reference:`WAGER_${w.id}`,details:{wagerId:w.id,status:targetStatus},testRunId:w.test_run_id});
+      await client.query('COMMIT');res.json({ok:true});
+    }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+  }catch(e){res.status(400).json({error:e.message})}
+}
+app.post("/api/wagers/:id/decline",(req,res)=>cancelOrDeclineWager(req,res,'DECLINE'));
+app.post("/api/wagers/:id/cancel",(req,res)=>cancelOrDeclineWager(req,res,'CANCEL'));
+
 app.get("/api/markets", async (req, res) => {
   const accountId = await requestAccountId(req);
   if (!accountId) return res.status(400).json({ error: "Missing account." });
@@ -1393,6 +1589,36 @@ app.post("/api/admin/markets/:id/result", adminOrModerator, async (req, res) => 
       );
     }
 
+    const wagers = await client.query("SELECT * FROM wagers WHERE market_id=$1 AND status IN ('PENDING','ACCEPTED') FOR UPDATE", [id]);
+    for (const w of wagers.rows) {
+      if (w.status === 'PENDING' || result === 'VOID') {
+        const acctQ = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [w.creator_account_id]);
+        const before = Number(acctQ.rows[0].balance);
+        const after = Number((before + Number(w.amount)).toFixed(4));
+        await client.query("UPDATE accounts SET balance=$1 WHERE id=$2", [after, w.creator_account_id]);
+        await addLedgerEntry(client, { accountId:w.creator_account_id, entryType:'WAGER_REFUND', amount:Number(w.amount), balanceBefore:before, balanceAfter:after, marketId:id, reference:`WAGER_${w.id}`, details:{wagerId:w.id, reason:result === 'VOID' ? 'VOID_MARKET' : 'UNACCEPTED'}, testRunId:w.test_run_id });
+        if (result === 'VOID') {
+          const oppQ = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [w.opponent_account_id]);
+          const ob = Number(oppQ.rows[0].balance), oa = Number((ob + Number(w.amount)).toFixed(4));
+          await client.query("UPDATE accounts SET balance=$1 WHERE id=$2", [oa,w.opponent_account_id]);
+          await addLedgerEntry(client, { accountId:w.opponent_account_id, entryType:'WAGER_REFUND', amount:Number(w.amount), balanceBefore:ob, balanceAfter:oa, marketId:id, reference:`WAGER_${w.id}`, details:{wagerId:w.id, reason:'VOID_MARKET'}, testRunId:w.test_run_id });
+        }
+        await client.query("UPDATE wagers SET status='VOID', settled_at=NOW() WHERE id=$1", [w.id]);
+        continue;
+      }
+      const creatorWon = w.creator_side === result;
+      const winner = creatorWon ? w.creator_account_id : w.opponent_account_id;
+      const payout = Number((Number(w.amount) * 2).toFixed(4));
+      const acctQ = await client.query("SELECT balance FROM accounts WHERE id=$1 FOR UPDATE", [winner]);
+      const before = Number(acctQ.rows[0].balance), after = Number((before + payout).toFixed(4));
+      await client.query("UPDATE accounts SET balance=$1 WHERE id=$2", [after,winner]);
+      await addLedgerEntry(client,{accountId:winner,entryType:'WAGER_PAYOUT',amount:payout,balanceBefore:before,balanceAfter:after,marketId:id,reference:`WAGER_${w.id}`,details:{wagerId:w.id,payout,result},testRunId:w.test_run_id});
+      await client.query("UPDATE wagers SET status='SETTLED', winner_account_id=$1, settled_at=NOW() WHERE id=$2",[winner,w.id]);
+      await createNotification(client,{accountId:winner,type:'WAGER',title:'Wager won',message:`You won a $${payout.toFixed(2)} payout on ${m.rows[0].question}.`,marketId:id});
+      const loser=creatorWon?w.opponent_account_id:w.creator_account_id;
+      await createNotification(client,{accountId:loser,type:'WAGER',title:'Wager settled',message:`Your $${Number(w.amount).toFixed(2)} wager settled on ${m.rows[0].question}.`,marketId:id});
+    }
+
     await client.query("UPDATE markets SET status='SETTLED', updated_at=NOW() WHERE id=$1", [id]);
     const matchQ = await client.query("SELECT match_id FROM markets WHERE id=$1", [id]);
     if (matchQ.rows[0]?.match_id) await client.query("UPDATE matches SET status='COMPLETE', updated_at=NOW() WHERE id=$1", [matchQ.rows[0].match_id]);
@@ -1452,7 +1678,8 @@ app.get("/api/admin/test", adminOrModerator, async (_req, res) => {
   const members = await pool.query(`SELECT a.id, a.discord_id, a.display_name, a.balance FROM test_run_members tm JOIN accounts a ON a.id=tm.account_id WHERE tm.test_run_id=$1 ORDER BY tm.added_at`, [run.id]);
   const stats = await pool.query(`SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume FROM trades WHERE test_run_id=$1`, [run.id]);
   const audits = await pool.query(`SELECT COUNT(*)::int AS events FROM audit_logs WHERE test_run_id=$1`, [run.id]);
-  return res.json({active:true, run, members:members.rows, stats:{trades:stats.rows[0].trades,volume:Number(stats.rows[0].volume),events:audits.rows[0].events}});
+  const wagers = await pool.query(`SELECT COUNT(*)::int AS count, COALESCE(SUM(amount) FILTER (WHERE status IN ('ACCEPTED','SETTLED')),0) AS staked FROM wagers WHERE test_run_id=$1`, [run.id]);
+  return res.json({active:true, run, members:members.rows, stats:{trades:stats.rows[0].trades,volume:Number(stats.rows[0].volume),events:audits.rows[0].events,wagers:Number(wagers.rows[0].count||0),wagered:Number(wagers.rows[0].staked||0)}});
 });
 
 app.get("/api/admin/test/users", adminOrModerator, async (req,res)=>{
@@ -1507,6 +1734,7 @@ app.post("/api/admin/test/end", adminOnly, async (req, res) => {
       await client.query("DELETE FROM positions WHERE market_id=$1", [cm.id]);
       await client.query("UPDATE markets SET status='VOID', result='VOID', updated_at=NOW() WHERE id=$1", [cm.id]);
     }
+    await client.query("UPDATE wagers SET status='VOID', settled_at=NOW() WHERE test_run_id=$1 AND status IN ('PENDING','ACCEPTED')", [run.id]);
     await client.query("UPDATE matches SET status='CANCELLED', updated_at=NOW() WHERE test_run_id=$1", [run.id]);
     await restoreTestState(client, run.id);
     await client.query("UPDATE test_runs SET status='ENDED', ended_by=$1, ended_at=NOW() WHERE id=$2", [req.admin?.accountId || req.admin?.discordId || 'admin', run.id]);
@@ -1553,27 +1781,21 @@ app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
 
 app.get("/api/admin/test/history", adminOrModerator, async (_req,res)=>{
   try{
-    const runs=await pool.query(`SELECT tr.id,tr.status,tr.label,tr.started_by,tr.started_at,tr.ended_by,tr.ended_at
+    const runs=await pool.query(`SELECT tr.id,tr.status,tr.label,tr.started_by,tr.started_at,tr.ended_by,tr.ended_at,
+      (SELECT COUNT(*) FROM test_run_members tm WHERE tm.test_run_id=tr.id)::int AS members
       FROM test_runs tr ORDER BY tr.started_at DESC LIMIT 25`);
     const rows=[];
     for(const r of runs.rows){
-      let trades=0, volume=0, events=0;
-      try{
-        const q=await pool.query(`SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume
-          FROM trades WHERE test_run_id=$1`,[r.id]);
-        trades=Number(q.rows[0]?.trades||0); volume=Number(q.rows[0]?.volume||0);
-      }catch(e){ /* keep the run visible even if legacy trade rows lack test linkage */ }
-      try{
-        const q=await pool.query(`SELECT COUNT(*)::int AS events FROM audit_logs WHERE test_run_id=$1`,[r.id]);
-        events=Number(q.rows[0]?.events||0);
-      }catch(e){}
-      rows.push({...r,trades,volume,events});
+      const q=await pool.query(`SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume FROM trades WHERE test_run_id=$1`,[r.id]);
+      const e=await pool.query(`SELECT COUNT(*)::int AS events FROM audit_logs WHERE test_run_id=$1`,[r.id]);
+      const w=await pool.query(`SELECT COUNT(*)::int AS wagers, COALESCE(SUM(amount) FILTER (WHERE status IN ('ACCEPTED','SETTLED')),0) AS wagered FROM wagers WHERE test_run_id=$1`,[r.id]);
+      const startMs=new Date(r.started_at).getTime(), endMs=r.ended_at?new Date(r.ended_at).getTime():Date.now();
+      rows.push({...r,trades:Number(q.rows[0]?.trades||0),volume:Number(q.rows[0]?.volume||0),events:Number(e.rows[0]?.events||0),wagers:Number(w.rows[0]?.wagers||0),wagered:Number(w.rows[0]?.wagered||0),durationSeconds:Math.max(0,Math.round((endMs-startMs)/1000))});
     }
-    res.set("Cache-Control","no-store");
-    res.json(rows);
+    res.set('Cache-Control','no-store'); res.json(rows);
   }catch(e){
-    console.error("test history error:",e);
-    res.status(500).json({error:"Unable to load recent test performance."});
+    console.error('test history error:',e);
+    res.status(500).json({error:'Unable to load recent test performance.'});
   }
 });
 
