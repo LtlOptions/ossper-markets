@@ -992,6 +992,67 @@ app.get("/api/market/:id/chart", async (req, res) => {
   }
 });
 
+app.get("/api/portfolio/chart", async (req, res) => {
+  try {
+    const accountId = await requestAccountId(req);
+    if (!accountId) return res.status(400).json({ error: "Missing account." });
+    await ensureAccount(accountId);
+    const activeTest = await getActiveTestForAccount(accountId);
+    const testRunId = activeTest?.id || null;
+    const tradeWhere = testRunId ? "t.test_run_id=$1" : "t.test_run_id IS NULL";
+    const tradeParams = testRunId ? [testRunId, accountId] : [accountId];
+    const accountTradeSql = testRunId
+      ? `SELECT t.id,t.market_id,t.side,t.action,t.quantity,t.price,t.gross,t.fee,t.created_at
+         FROM trades t WHERE t.account_id=$2 AND t.test_run_id=$1 ORDER BY t.created_at ASC,t.id ASC LIMIT 1000`
+      : `SELECT t.id,t.market_id,t.side,t.action,t.quantity,t.price,t.gross,t.fee,t.created_at
+         FROM trades t WHERE t.account_id=$1 AND t.test_run_id IS NULL ORDER BY t.created_at ASC,t.id ASC LIMIT 1000`;
+    const accountTradesQ = await pool.query(accountTradeSql, tradeParams);
+    if (!accountTradesQ.rows.length) return res.json({ points: [] });
+    const marketIds = [...new Set(accountTradesQ.rows.map(t => Number(t.market_id)))];
+    const marketsQ = await pool.query(`SELECT id,opening_yes_price,yes_price FROM markets WHERE id=ANY($1::int[])`, [marketIds]);
+    const yesPrices = new Map(marketsQ.rows.map(m => [Number(m.id), Number(m.opening_yes_price ?? m.yes_price ?? .5)]));
+    const globalTradeSql = testRunId
+      ? `SELECT market_id,side,price,created_at,id FROM trades WHERE test_run_id=$1 AND market_id=ANY($2::int[]) ORDER BY created_at ASC,id ASC LIMIT 10000`
+      : `SELECT market_id,side,price,created_at,id FROM trades WHERE test_run_id IS NULL AND market_id=ANY($1::int[]) ORDER BY created_at ASC,id ASC LIMIT 10000`;
+    const globalParams = testRunId ? [testRunId, marketIds] : [marketIds];
+    const globalTradesQ = await pool.query(globalTradeSql, globalParams);
+    const firstLedgerQ = testRunId
+      ? await pool.query(`SELECT balance_before FROM ledger_entries WHERE account_id=$1 AND test_run_id=$2 ORDER BY created_at ASC,id ASC LIMIT 1`, [accountId,testRunId])
+      : await pool.query(`SELECT balance_before FROM ledger_entries WHERE account_id=$1 AND test_run_id IS NULL ORDER BY created_at ASC,id ASC LIMIT 1`, [accountId]);
+    let cash = firstLedgerQ.rows.length ? Number(firstLedgerQ.rows[0].balance_before) : 500;
+    const positions = new Map();
+    const points = [];
+    let gi = 0;
+    const globals = globalTradesQ.rows;
+    for (const t of accountTradesQ.rows) {
+      const at = new Date(t.created_at).getTime();
+      while (gi < globals.length && new Date(globals[gi].created_at).getTime() <= at) {
+        const gt = globals[gi++];
+        const gp = Number(gt.price);
+        yesPrices.set(Number(gt.market_id), gt.side === 'YES' ? gp : 1 - gp);
+      }
+      const marketId = Number(t.market_id), qty = Number(t.quantity), gross = Number(t.gross), fee = Number(t.fee || 0), price = Number(t.price);
+      cash = Number((cash + (t.action === 'BUY' ? -(gross + fee) : (gross - fee))).toFixed(4));
+      const key = `${marketId}:${t.side}`;
+      const nextQty = Math.max(0, Number(positions.get(key) || 0) + (t.action === 'BUY' ? qty : -qty));
+      if (nextQty) positions.set(key, nextQty); else positions.delete(key);
+      yesPrices.set(marketId, t.side === 'YES' ? price : 1 - price);
+      let equity = cash;
+      for (const [k,q] of positions) {
+        const [mid,side] = k.split(':');
+        const yp = Number(yesPrices.get(Number(mid)) ?? .5);
+        equity += q * (side === 'YES' ? yp : 1 - yp);
+      }
+      points.push({t:t.created_at,equity:Number(equity.toFixed(4)),event:`${t.action} ${t.side} · ${qty} contracts`});
+    }
+    res.set('Cache-Control','no-store');
+    res.json({ points });
+  } catch (e) {
+    console.error('portfolio chart', e);
+    res.status(500).json({ error: "Unable to load portfolio chart." });
+  }
+});
+
 app.get("/api/wagers/users", async (req, res) => {
   try {
     const accountId = await requestAccountId(req);
