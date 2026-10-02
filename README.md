@@ -1,4 +1,4 @@
-# Ossper Markets v1.7.1 — Sandbox + Community UX
+# Ossper Markets v1.7.2 — Mode Controls + Test Quick Actions
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -57,3 +57,11 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Admin and Test Control inherit the saved interface theme, accent, glass/solid surface choice, and custom background.
 - Test Control now shows the authenticated Ossper role/source so permission problems are immediately visible.
 - No database wipe, DROP, or TRUNCATE operations added.
+
+
+## v1.7.2
+- Settings hover menu stays open while the cursor is over the trigger/menu and fades on exit; mobile remains tap-driven.
+- Account dropdown distinguishes User Mode, Moderation Mode, and Admin Command Center as view/tool modes.
+- Owner/Admin account dropdown includes Test Control status, configured-test quick start, and active-test end action.
+- Test Control remembers the configured label/tester list locally for quick start.
+- No destructive database reset.

@@ -26,7 +26,8 @@ async function searchTesters(){
   if(!q){testerResults.innerHTML='';searchUsers=[];return}
   searchTimer=setTimeout(async()=>{try{const d=await api('/api/admin/test/users?q='+encodeURIComponent(q));searchUsers=d.users||[];testerResults.innerHTML=searchUsers.length?searchUsers.map((u,i)=>`<div class="searchResult" onclick="selectTesterByIndex(${i})"><b>${esc(u.display_name||'Unknown')}</b><div class="muted">Discord ${esc(u.discord_id)}</div></div>`).join(""):'<div class="searchResult muted">No linked Discord account found.</div>'}catch(e){testerResults.innerHTML='<div class="searchResult err">'+esc(e.message)+'</div>'}},180)
 }
-function selectTesterByIndex(i){const u=searchUsers[i];if(!u)return;if(!selectedTesters.some(x=>x.discord_id===u.discord_id))selectedTesters.push(u);testerSearch.value='';testerResults.innerHTML='';searchUsers=[];renderSelected()}
+function saveTestDraft(){try{localStorage.setItem('ossper_test_draft_v172',JSON.stringify({label:label.value||'Weekend Ossper Trial',discordIds:selectedTesters.map(x=>x.discord_id),updatedAt:Date.now()}))}catch{}}
+function selectTesterByIndex(i){const u=searchUsers[i];if(!u)return;if(!selectedTesters.some(x=>x.discord_id===u.discord_id))selectedTesters.push(u);testerSearch.value='';testerResults.innerHTML='';searchUsers=[];renderSelected();saveTestDraft()}
 async function load(){
   try{
     const [me,t,h]=await Promise.all([api('/api/admin/me'),api('/api/admin/test'),api('/api/admin/test/history')]);currentRole=String(me.role||'user').toLowerCase();window.adminMe=me;document.getElementById('roleNotice').innerHTML=`Current Ossper access: <b>${esc(currentRole.toUpperCase())}</b>${me.source?` · ${esc(me.source)}`:''}`;
@@ -43,10 +44,11 @@ async function load(){
     history.innerHTML=rows.length?rows.map(x=>`<div class="history"><b>${esc(x.label)}</b> <span class="pill">${esc(x.status)}</span><div class="muted">${new Date(x.started_at).toLocaleString()} · ${x.trades} trades · ${money(x.volume)} volume</div></div>`).join(''):'No completed test runs yet.';
   }catch(e){document.getElementById('roleNotice').innerHTML='<span class="err">Access check failed: '+esc(e.message)+'</span>';setMsg(e.message)}
 }
-function addSelfToTest(){const me=window.adminMe||{};if(!me.discordId)return setMsg('Your admin session is not linked to a Discord account.');if(!selectedTesters.some(x=>x.discord_id===me.discordId)){selectedTesters.push({discord_id:me.discordId,display_name:me.displayName||me.discordId});renderSelected()} }
+function addSelfToTest(){const me=window.adminMe||{};if(!me.discordId)return setMsg('Your admin session is not linked to a Discord account.');if(!selectedTesters.some(x=>x.discord_id===me.discordId)){selectedTesters.push({discord_id:me.discordId,display_name:me.displayName||me.discordId});renderSelected();saveTestDraft()} }
 async function startTest(){
   if(!selectedTesters.length)return setMsg('Select at least one tester from the Discord directory.');
   if(!confirm('Start the controlled test? Enrolled accounts will start at $500 and their pre-test state will be restored when the test ends.'))return;
+  saveTestDraft();
   try{await api('/api/admin/test/start',{method:'POST',body:JSON.stringify({label:label.value,discordIds:selectedTesters.map(x=>x.discord_id)})});setMsg('Test started.',true);await load()}catch(e){setMsg(e.message)}
 }
 async function endTest(){if(!confirm('END TEST and restore all participating accounts and market state? Test records will remain logged.'))return;try{const r=await api('/api/admin/test/end',{method:'POST',body:'{}'});alert(`Test ended. ${r.trades} trades and ${money(r.volume)} volume were recorded.`);await load()}catch(e){setMsg(e.message)}}
@@ -55,6 +57,7 @@ async function resetOne(){if(!confirm('Reset this tester to their test-start sta
 async function resetAll(){if(!confirm('Reset ALL active testers to $500 and clear their test positions?'))return;try{await api('/api/admin/test/reset-all',{method:'POST',body:'{}'});await load()}catch(e){setMsg(e.message)}}
 async function createSandboxMatch(){try{const body={eventName:sbEventName.value,eventDay:sbDay.value,format:sbFormat.value,sideA:sbA.value,sideB:sbB.value,yesPrice:Number(sbPrice.value),liquidity:Number(sbDepth.value),scheduledAt:sbTime.value?new Date(sbTime.value).toISOString():null,closeAt:sbClose.value?new Date(sbClose.value).toISOString():null,marketMode:sbMode.value};await api('/api/admin/matches',{method:'POST',body:JSON.stringify(body)});sbMsg.innerHTML='<span class="ok">Sandbox draft created ✓</span>';sbA.value='';sbB.value='';await load()}catch(e){sbMsg.innerHTML='<span class="err">'+esc(e.message)+'</span>'}}
 (function applySavedTheme(){try{const p=JSON.parse(localStorage.getItem('ossper_preferences_v12')||'{}');if(p.theme)document.body.dataset.theme=p.theme;if(p.surface==='solid')document.body.classList.add('solidSurface');if(p.background)document.body.style.background=`radial-gradient(circle at 50% -15%,var(--glow,#193557),var(--bg2,#050c15) 45%,${p.background} 100%)`;const map={blue:['#4f91ff','#7db0ff'],violet:['#9a72ff','#b59aff'],cyan:['#21c9e9','#7be4f5'],gold:['#e3b341','#f0cf73'],emerald:['#2dd4a3','#79f0cb'],orange:['#ff9d3d','#ffc078'],pink:['#ff6fae','#ff9bc7'],magenta:['#e65cff','#f29aff'],ice:['#8fdcff','#c6efff'],rose:['#ff6b83','#ff9eae']};if(p.accent&&map[p.accent]){document.documentElement.style.setProperty('--accent',map[p.accent][0]);}}catch{}})();
+label.addEventListener('input',saveTestDraft);
 testerSearch.addEventListener('input',searchTesters);
 const selectedTestersEl=document.getElementById('selectedTesters');
 renderSelected();load();setInterval(load,5000);
