@@ -1,6 +1,12 @@
-# Ossper Markets v1.7.0 — Global Glass Surfaces
+# Ossper Markets v1.7.2 — Admin Access + Global Glass Surfaces
 
 Community prediction market for tournament events. Virtual money only.
+
+## v1.7.2 changes
+- Fixed Discord-session authentication on Admin/Moderator mutation routes, including tournament creation/publishing, market lifecycle actions, result entry, and Owner/Admin test controls.
+- Admin result actions now use clearer tournament language such as “Skipper wins” / “Milk wins” instead of “Resolve”.
+- Extended the shared user appearance system into the Admin command center, including theme, accent palette, background, and glass/solid surface treatment.
+- Added the full accent palette to Admin surfaces instead of retaining the legacy blue-only styling.
 
 ## v1.6.9 changes
 - Surface style preference now applies consistently across Home, Markets, Tournaments, Activity, Portfolio, Help, About, notifications, filters, and modal surfaces.

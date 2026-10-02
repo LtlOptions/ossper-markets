@@ -105,12 +105,22 @@ async function ownerOnly(req, res, next) {
 }
 
 async function adminOrModerator(req, res, next) {
+  // Authenticate the request first. These routes are intentionally allowed to
+  // accept Discord-admin sessions as well as the legacy admin-key fallback.
+  if (!req.admin) {
+    return adminOnly(req, res, () => adminOrModerator(req, res, next));
+  }
   if (req.admin?.source === "admin_key") return next();
   if (["owner","admin","moderator"].includes(String(req.admin?.role || "").toLowerCase())) return next();
   return res.status(403).json({ error: "Admin or moderator access required." });
 }
 
 async function adminOrOwner(req, res, next) {
+  // Same authentication behavior as adminOrModerator, but restricted to
+  // Owner/Admin for test infrastructure and sensitive controls.
+  if (!req.admin) {
+    return adminOnly(req, res, () => adminOrOwner(req, res, next));
+  }
   if (req.admin?.source === "admin_key") return next();
   if (["owner","admin"].includes(String(req.admin?.role || "").toLowerCase())) return next();
   return res.status(403).json({ error: "Admin access required." });
