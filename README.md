@@ -1,4 +1,4 @@
-# Ossper Markets v1.7.2 — Mode Controls + Test Quick Actions
+# Ossper Markets v1.7.3 — Navigation + Account Menu Fixes
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -65,3 +65,12 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Owner/Admin account dropdown includes Test Control status, configured-test quick start, and active-test end action.
 - Test Control remembers the configured label/tester list locally for quick start.
 - No destructive database reset.
+
+
+## v1.7.3
+- Restored the account dropdown toggle so status, role/mode, test controls, and sign-out are accessible again.
+- Added click-outside handling for the account menu without interfering with menu actions.
+- Added a real Settings menu toggle/close handler with a wider hover bridge and slower fade so desktop users can move the cursor into the menu reliably.
+- Added a per-tab “last Ossper page” return marker so Admin can send you back to the exact page/hash you were on before opening the command center.
+- Added a Back to previous Ossper page action in Admin.
+- No database changes.

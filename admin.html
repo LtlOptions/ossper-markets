@@ -47,7 +47,7 @@ input,select{width:100%;background:#07111f;color:#eef4ff;border:1px solid #304b6
 <div id="panel" style="display:none">
   <div class="top">
     <div><div class="eyebrow">Ossper Markets</div><div class="title">ADMIN</div><div class="sub">Tournament command center · virtual-money environment</div></div>
-    <div class="identity"><div class="role" id="roleText">ADMIN</div><div class="who" id="whoText">Loading…</div></div>
+    <div class="identity"><div class="role" id="roleText">ADMIN</div><div class="who" id="whoText">Loading…</div><div class="actions" style="margin-top:9px"><button type="button" onclick="returnToLastOssperPage()">← Back to previous page</button></div></div>
   </div>
 
   <div class="tabs">
@@ -121,6 +121,19 @@ input,select{width:100%;background:#07111f;color:#eef4ff;border:1px solid #304b6
 </div>
 </main>
 
+<script>
+function returnToLastOssperPage(){
+  let target='/' ;
+  try{
+    const saved=sessionStorage.getItem('ossper_return_path');
+    if(saved && saved.startsWith('/') && !saved.startsWith('/admin')) target=saved;
+    else if(document.referrer){
+      const u=new URL(document.referrer,location.origin);
+      if(u.origin===location.origin && !u.pathname.startsWith('/admin')) target=u.pathname+u.search+u.hash;
+    }
+  }catch{}
+  location.href=target;
+}
 <script>
 (function applySavedTheme(){try{const p=JSON.parse(localStorage.getItem('ossper_preferences_v12')||'{}');if(p.theme)document.body.dataset.theme=p.theme;if(p.surface==='solid')document.body.classList.add('solidSurface');else document.body.classList.add('glassSurface');if(p.background)document.body.style.background=`radial-gradient(circle at 50% -15%,var(--glow,#193557),var(--bg2,#050c15) 45%,${p.background} 100%)`;const map={blue:['#4f91ff','#7db0ff'],violet:['#9a72ff','#b59aff'],cyan:['#21c9e9','#7be4f5'],gold:['#e3b341','#f0cf73'],emerald:['#2dd4a3','#79f0cb'],orange:['#ff9d3d','#ffc078'],pink:['#ff6fae','#ff9bc7'],magenta:['#e65cff','#f29aff'],ice:['#8fdcff','#c6efff'],rose:['#ff6b83','#ff9eae']};if(p.accent&&map[p.accent]){document.documentElement.style.setProperty('--accent',map[p.accent][0]);document.documentElement.style.setProperty('--accent2',map[p.accent][1]);}}catch{}})();
 const PREF_KEY="ossper_preferences_v12";
