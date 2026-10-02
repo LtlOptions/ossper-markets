@@ -26,7 +26,7 @@ input,select{width:100%;background:#07111f;color:#eef4ff;border:1px solid #304b6
 .roleSearch{position:relative}.roleSearchResults{position:absolute;left:0;right:0;top:58px;z-index:20;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 18px 50px rgba(0,0,0,.35);overflow:hidden}.roleSearchResult{padding:10px 11px;border-top:1px solid var(--line);cursor:pointer}.roleSearchResult:first-child{border-top:0}.roleSearchResult:hover{background:color-mix(in srgb,var(--accent) 10%,var(--panel))}.login{max-width:620px;margin:70px auto}.error{color:#ff9daa;font-size:12px}.success{color:var(--green);font-size:12px}
 @media(max-width:850px){.stats{grid-template-columns:repeat(2,1fr)}.matchGrid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.identity{width:100%}.row3{grid-template-columns:1fr}}
 @media(max-width:600px){main{padding:24px 13px 60px}.title{font-size:29px}.stats{grid-template-columns:1fr 1fr}.row,.depthGrid{grid-template-columns:1fr}.marketHead{flex-direction:column}}
-.glassSurface .box,.glassSurface .stat,.glassSurface .identity,.glassSurface .matchCard,.glassSurface .notice{background:color-mix(in srgb,var(--p) 48%,transparent);backdrop-filter:blur(14px)}body.solidSurface .box,body.solidSurface .stat,body.solidSurface .identity,body.solidSurface .matchCard,body.solidSurface .notice{background:var(--p)}
+.glassSurface .box,.glassSurface .stat,.glassSurface .identity,.glassSurface .matchCard,.glassSurface .notice{background:color-mix(in srgb,var(--panel) 48%,transparent);backdrop-filter:blur(14px)}body.solidSurface .box,body.solidSurface .stat,body.solidSurface .identity,body.solidSurface .matchCard,body.solidSurface .notice{background:var(--panel)}
 </style>
 </head>
 <body>
@@ -37,8 +37,8 @@ input,select{width:100%;background:#07111f;color:#eef4ff;border:1px solid #304b6
   <div class="box" style="margin:20px 0 0;padding:18px">
     <h2>Admin access</h2>
     <div class="notice">Ossper admins can use their Discord account. The legacy admin key remains available as an emergency fallback and for the one-time Owner bootstrap.</div>
-    <div class="actions"><button class="primary" onclick="discordAdminLogin()">Sign in with Discord</button><button onclick="bootstrapOwner()">Bootstrap Owner with admin key</button></div>
-    <div class="hint" style="margin-top:11px">For bootstrap, you must already be signed into Ossper with Discord in this browser.</div>
+    <div class="actions"><button class="primary" onclick="discordAdminLogin()">Sign in with Discord</button><button onclick="adminKeyLogin()">Sign in with admin key</button></div>
+    <div class="hint" style="margin-top:11px">Discord uses your existing Ossper account. The admin key is an emergency fallback. Owner bootstrap is only needed if your Discord account has not been granted an Owner role yet.</div>
     <input id="key" type="password" placeholder="Admin key for Owner bootstrap">
     <div id="loginMsg"></div>
   </div>
@@ -134,7 +134,6 @@ function returnToLastOssperPage(){
   }catch{}
   location.href=target;
 }
-<script>
 (function applySavedTheme(){try{const p=JSON.parse(localStorage.getItem('ossper_preferences_v12')||'{}');if(p.theme)document.body.dataset.theme=p.theme;if(p.surface==='solid')document.body.classList.add('solidSurface');else document.body.classList.add('glassSurface');if(p.background)document.body.style.background=`radial-gradient(circle at 50% -15%,var(--glow,#193557),var(--bg2,#050c15) 45%,${p.background} 100%)`;const map={blue:['#4f91ff','#7db0ff'],violet:['#9a72ff','#b59aff'],cyan:['#21c9e9','#7be4f5'],gold:['#e3b341','#f0cf73'],emerald:['#2dd4a3','#79f0cb'],orange:['#ff9d3d','#ffc078'],pink:['#ff6fae','#ff9bc7'],magenta:['#e65cff','#f29aff'],ice:['#8fdcff','#c6efff'],rose:['#ff6b83','#ff9eae']};if(p.accent&&map[p.accent]){document.documentElement.style.setProperty('--accent',map[p.accent][0]);document.documentElement.style.setProperty('--accent2',map[p.accent][1]);}}catch{}})();
 const PREF_KEY="ossper_preferences_v12";
 function applySharedTheme(){try{const p=JSON.parse(localStorage.getItem(PREF_KEY)||"{}");const themes=["midnight","black","slate","graphite","aurora","ocean","forest","rose","ember","plum"];document.body.dataset.theme=themes.includes(p.theme)?p.theme:"midnight";document.body.classList.toggle("solidSurface",p.surface==="solid");document.body.classList.toggle("glassSurface",p.surface!=="solid");const amap={blue:["#4f91ff","#7db0ff"],violet:["#9a72ff","#b59aff"],cyan:["#21c9e9","#7be4f5"],gold:["#e3b341","#f0cf73"],emerald:["#2dd4a3","#79f0cb"],orange:["#ff9d3d","#ffc078"],pink:["#ff6fae","#ff9bc7"],magenta:["#e65cff","#f29aff"],ice:["#8fdcff","#c6efff"],rose:["#ff6b83","#ff9eae"]};const a=amap[p.accent]||amap.blue;document.documentElement.style.setProperty("--accent",a[0]);if(p.background)document.body.style.background=`radial-gradient(circle at 50% -12%,var(--glow,#153158),var(--bg2,#07111e) 42%,${p.background} 100%)`; }catch{}}
@@ -158,7 +157,8 @@ function setIdentity(me){
   document.getElementById("rolesSection").style.display=role==="owner"?"block":"none";
   document.getElementById("controls").style.display=["owner","admin"].includes(role)?"block":"none";
 }
-async function discordAdminLogin(){try{const r=await api("/api/admin/discord/start");location.href=r.url}catch(e){loginMsg.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
+async function discordAdminLogin(){try{location.href="/auth/discord/admin"}catch(e){loginMsg.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
+async function adminKeyLogin(){try{await api("/api/admin/login",{method:"POST",body:JSON.stringify({key:key.value})});location.reload()}catch(e){loginMsg.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
 async function bootstrapOwner(){try{await api("/api/admin/bootstrap",{method:"POST",body:JSON.stringify({key:key.value})});loginMsg.innerHTML='<div class="success">Owner role created ✓</div>';setTimeout(()=>location.reload(),350)}catch(e){loginMsg.innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
 async function loadSystem(){try{const s=await api("/api/admin/system");const frozen=!!s.frozen;document.getElementById("statSystem").textContent=frozen?"FROZEN":"ACTIVE";document.getElementById("statSystemSub").textContent=frozen?(s.reason||"Trading paused"):"All market systems active";document.getElementById("systemStatus").textContent=frozen?"SYSTEM FROZEN":"SYSTEM ACTIVE";document.getElementById("statusDot").className="dot"+(frozen?" red":"");document.getElementById("systemReason").textContent=frozen?(s.reason?"· "+s.reason:""):"";document.getElementById("freezeBtn").disabled=frozen;document.getElementById("unfreezeBtn").disabled=!frozen;document.getElementById("systemMsg").textContent=frozen?"Trading and market mutations are blocked.":"All market systems active."}catch(e){document.getElementById("systemMsg").innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
 async function setFreeze(frozen){const reason=frozen?String(freezeReason.value||"").trim():"";if(frozen&&!confirm("FREEZE ALL trading and market activity now?"))return;if(!frozen&&!confirm("Unfreeze Ossper and allow activity again?"))return;try{await api("/api/admin/system/freeze",{method:"POST",body:JSON.stringify({frozen,reason})});freezeReason.value="";await loadAll()}catch(e){alert(e.message)}}
