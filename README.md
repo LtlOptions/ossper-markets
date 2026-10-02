@@ -37,3 +37,11 @@ Community prediction market for tournament events. Virtual money only.
 Virtual-money demo only. Do not treat this as a real-money platform.
 
 - v1.6.3: added a compact market overview modal with open/close times, live/fixed odds, volume/depth, positions, and Buy/Sell shortcuts; clicking a market opens the overview without navigating away.
+
+
+### v1.6.5 — Tournament filters & results archive
+- Markets can filter by day and 1v1/2v2 format.
+- Tournament calendar filters by day and format.
+- Optional Include past results filter reveals completed tournaments for the selected day/format.
+- Past tournament cards expose result hints and open the existing tournament overview/results modal.
+- v1.6.4 visual polish is included.
