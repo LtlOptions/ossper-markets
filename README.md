@@ -1,4 +1,4 @@
-# Ossper Markets v1.7.4 — Navigation + Account Menu Fixes
+# Ossper Markets v1.7.5 — Navigation + Account Menu Fixes
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -59,7 +59,7 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - No database wipe, DROP, or TRUNCATE operations added.
 
 
-## v1.7.4
+## v1.7.5
 - Settings hover menu stays open while the cursor is over the trigger/menu and fades on exit; mobile remains tap-driven.
 - Account dropdown distinguishes User Mode, Moderation Mode, and Admin Command Center as view/tool modes.
 - Owner/Admin account dropdown includes Test Control status, configured-test quick start, and active-test end action.
@@ -67,7 +67,7 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - No destructive database reset.
 
 
-## v1.7.4
+## v1.7.5
 - Restored the account dropdown toggle so status, role/mode, test controls, and sign-out are accessible again.
 - Added click-outside handling for the account menu without interfering with menu actions.
 - Added a real Settings menu toggle/close handler with a wider hover bridge and slower fade so desktop users can move the cursor into the menu reliably.
@@ -76,7 +76,7 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - No database changes.
 
 
-## v1.7.4
+## v1.7.5
 - Fixed Admin Discord login navigation and added working admin-key sign-in.
 - Restored glass surfaces in Admin and Test Control.
 - Added theme/accent/surface previews to Settings selectors.

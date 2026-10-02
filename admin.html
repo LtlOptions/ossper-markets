@@ -27,6 +27,20 @@ input,select{width:100%;background:#07111f;color:#eef4ff;border:1px solid #304b6
 @media(max-width:850px){.stats{grid-template-columns:repeat(2,1fr)}.matchGrid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.identity{width:100%}.row3{grid-template-columns:1fr}}
 @media(max-width:600px){main{padding:24px 13px 60px}.title{font-size:29px}.stats{grid-template-columns:1fr 1fr}.row,.depthGrid{grid-template-columns:1fr}.marketHead{flex-direction:column}}
 .glassSurface .box,.glassSurface .stat,.glassSurface .identity,.glassSurface .matchCard,.glassSurface .notice{background:color-mix(in srgb,var(--panel) 48%,transparent);backdrop-filter:blur(14px)}body.solidSurface .box,body.solidSurface .stat,body.solidSurface .identity,body.solidSurface .matchCard,body.solidSurface .notice{background:var(--panel)}
+
+/* v1.7.5 solid-surface completion */
+body.solidSurface .box,
+body.solidSurface .stat,
+body.solidSurface .identity,
+body.solidSurface .matchCard,
+body.solidSurface .notice,
+body.solidSurface .matchGroup,
+body.solidSurface .depthCard,
+body.solidSurface .roleSearchResults,
+body.solidSurface .tabs .tab { background:var(--panel) !important; backdrop-filter:none !important; }
+body.solidSurface .priceBox,
+body.solidSurface input,
+body.solidSurface select { background:var(--panel2) !important; }
 </style>
 </head>
 <body>
