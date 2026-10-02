@@ -1,4 +1,4 @@
-# Ossper Markets v1.6.0 — Sandbox + Community UX
+# Ossper Markets v1.6.2 — Sandbox + Community UX
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -13,7 +13,10 @@ Community prediction market for tournament events. Virtual money only.
 - Test Control now supports a searchable linked-Discord tester directory.
 - Controlled tests can create sandbox tournament matches while a test is active.
 - Test-created markets/matches are tagged to the run, isolated from non-test users, and marked VOID/CANCELLED when the test ends while test trade/audit history is retained.
-- Fixed Test Control history loading/caching behavior.
+- Fixed Test Control history loading so completed runs render instead of staying on Loading.
+- Added a Test Run audit filter for isolating sandbox events.
+- Added a fixed-odds preview that shows locked YES/NO decimal odds from the opening probability.
+- Improved Settings hover behavior and added stronger market/Home presentation for fixed-odds markets.
 - Fixed Admin audit API/UI response mismatch and restored paginated/filterable audit history.
 - Added defensive JSON/error handling and debounced quote requests to prevent spinner/rapid-input rate-limit errors.
 - No database wipe. All database changes are additive migrations.

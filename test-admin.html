@@ -36,7 +36,8 @@ async function load(){
       status.className='status ready';status.textContent='READY';statsCard.style.display='none';activeCard.style.display='none';start.disabled=false;
     }
     const rows=Array.isArray(h)?h:(Array.isArray(h?.rows)?h.rows:[]);
-    history.innerHTML=rows.length?rows.map(x=>`<div class="history"><b>${esc(x.label)}</b> <span class="pill">${esc(x.status)}</span><div class="muted">${new Date(x.started_at).toLocaleString()} · ${x.trades} trades · ${money(x.volume)} volume</div></div>`).join(''):'No completed test runs yet.';
+    const historyEl=document.getElementById("history");
+    historyEl.innerHTML=rows.length?rows.map(x=>`<div class="history"><b>${esc(x.label)}</b> <span class="pill">${esc(x.status)}</span><div class="muted">${new Date(x.started_at).toLocaleString()} · ${x.trades} trades · ${money(x.volume)} volume</div></div>`).join(''):'No completed test runs yet.';
   }catch(e){setMsg(e.message)}
 }
 async function startTest(){

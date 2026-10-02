@@ -1406,6 +1406,8 @@ app.get("/api/admin/audit", adminOnly, async (req, res) => {
   if (action) { params.push(`%${action}%`); where.push(`action ILIKE $${params.length}`); }
   if (actor) { params.push(`%${actor}%`); where.push(`actor ILIKE $${params.length}`); }
   if (Number.isInteger(marketId) && marketId > 0) { params.push(marketId); where.push(`market_id=$${params.length}`); }
+  const testRunId = String(req.query.testRunId || '').trim();
+  if (testRunId) { params.push(testRunId); where.push(`CAST(test_run_id AS TEXT) ILIKE $${params.length}`); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const countQ = await pool.query(`SELECT COUNT(*)::int AS total FROM audit_logs ${whereSql}`, params);
   const total = Number(countQ.rows[0].total || 0);
