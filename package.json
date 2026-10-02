@@ -1,6 +1,6 @@
 {
   "name": "ossper-markets",
-  "version": "1.6.9",
+  "version": "1.7.0",
   "private": true,
   "description": "Ossper Markets \u2014 community prediction market",
   "main": "server.js",

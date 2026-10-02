@@ -1429,6 +1429,14 @@ app.get("/api/admin/test", adminOnly, async (_req, res) => {
   return res.json({active:true, run, members:members.rows, stats:{trades:stats.rows[0].trades,volume:Number(stats.rows[0].volume),events:audits.rows[0].events}});
 });
 
+app.get("/api/admin/accounts", adminOnly, ownerOnly, async (req,res)=>{
+  const q=String(req.query.q||'').trim().slice(0,80);
+  const params=[]; let where="WHERE discord_id IS NOT NULL";
+  if(q){ params.push(`%${q}%`); where+=" AND (display_name ILIKE $1 OR discord_id ILIKE $1)"; }
+  const rows=await pool.query(`SELECT id,discord_id,display_name,avatar_url FROM accounts ${where} ORDER BY LOWER(COALESCE(display_name,'')), discord_id LIMIT 20`,params);
+  res.set("Cache-Control","no-store"); res.json({users:rows.rows});
+});
+
 app.get("/api/admin/test/users", adminOnly, async (req,res)=>{
   const q=String(req.query.q||'').trim().slice(0,80);
   const params=[]; let where="WHERE discord_id IS NOT NULL";
@@ -1436,7 +1444,7 @@ app.get("/api/admin/test/users", adminOnly, async (req,res)=>{
   const rows=await pool.query(`SELECT id,discord_id,display_name,avatar_url FROM accounts ${where} ORDER BY LOWER(COALESCE(display_name,'')), discord_id LIMIT 20`,params);
   res.set("Cache-Control","no-store"); res.json({users:rows.rows});
 });
-app.post("/api/admin/test/start", adminOnly, async (req, res) => {
+app.post("/api/admin/test/start", adminOrOwner, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({error:e.message}); }
   const existing = await getActiveTestRun();
   if (existing) return res.status(409).json({error:"A test run is already active."});
@@ -1469,7 +1477,7 @@ app.post("/api/admin/test/start", adminOnly, async (req, res) => {
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.message});} finally{client.release();}
 });
 
-app.post("/api/admin/test/end", adminOnly, async (req, res) => {
+app.post("/api/admin/test/end", adminOrOwner, async (req, res) => {
   const run = await getActiveTestRun();
   if (!run) return res.status(404).json({error:"No active test run."});
   const client = await pool.connect();
@@ -1490,7 +1498,7 @@ app.post("/api/admin/test/end", adminOnly, async (req, res) => {
   } catch(e){await client.query("ROLLBACK");res.status(400).json({error:e.message});} finally{client.release();}
 });
 
-app.post("/api/admin/test/funds", adminOnly, async (req,res)=>{
+app.post("/api/admin/test/funds", adminOrOwner, async (req,res)=>{
   const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
   const discordId=String(req.body?.discordId||'').trim(); const amount=Number(req.body?.amount);
   if(!/^\d{15,22}$/.test(discordId)||!Number.isFinite(amount)||amount<=0||amount>100000)return res.status(400).json({error:"Enter a valid Discord ID and amount up to $100,000."});
@@ -1501,7 +1509,7 @@ app.post("/api/admin/test/funds", adminOnly, async (req,res)=>{
   res.json({ok:true,balance:after});
 });
 
-app.post("/api/admin/test/reset-account", adminOnly, async (req,res)=>{
+app.post("/api/admin/test/reset-account", adminOrOwner, async (req,res)=>{
   const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
   const discordId=String(req.body?.discordId||'').trim();
   const snap=await pool.query("SELECT account_id,balance FROM test_account_snapshots s JOIN accounts a ON a.id=s.account_id WHERE s.test_run_id=$1 AND a.discord_id=$2",[run.id,discordId]); if(!snap.rows.length)return res.status(404).json({error:"That account is not enrolled in the active test."});
@@ -1511,7 +1519,7 @@ app.post("/api/admin/test/reset-account", adminOnly, async (req,res)=>{
   await testAudit(req.admin?.accountId||req.admin?.discordId||'admin','TEST_ACCOUNT_RESET',{discordId,before,after:target},run.id); res.json({ok:true,balance:target});
 });
 
-app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
+app.post("/api/admin/test/reset-all", adminOrOwner, async (req,res)=>{
   const run=await getActiveTestRun(); if(!run)return res.status(404).json({error:"No active test run."});
   const members=await pool.query("SELECT a.id,a.discord_id FROM test_run_members tm JOIN accounts a ON a.id=tm.account_id WHERE tm.test_run_id=$1",[run.id]);
   for(const a of members.rows){

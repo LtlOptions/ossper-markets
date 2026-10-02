@@ -1,4 +1,4 @@
-# Ossper Markets v1.6.9 — Global Glass Surfaces
+# Ossper Markets v1.7.0 — Global Glass Surfaces
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -62,3 +62,12 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Glass/translucent tournament overview modal with subtle blue/pink depth.
 - Glass summary metrics, result rows, and open-market controls for a more cohesive Ossper visual language.
 - Keeps the existing tournament filters, past-results archive, and hover Settings behavior.
+
+
+## v1.7.0 — Moderator sandbox + global UI polish
+- Owner-only Discord role assignment autocomplete by linked account name/ID.
+- Moderator mode can create/publish practice tournaments while an active test run is open; active test automatically tags new matches/markets to the sandbox.
+- Test start/end/funding/reset controls are Owner/Admin only. Moderators cannot start or end tests.
+- Signed-in moderators/admins can switch between normal User mode and their operational Admin/Moderator mode.
+- Added Graphite and Aurora interface themes.
+- Existing Glass/Solid surface preference remains global across the public interface.

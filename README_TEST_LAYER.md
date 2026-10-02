@@ -1,6 +1,6 @@
 # Ossper Controlled Test Layer
 
-The current v1.6 test layer is additive and designed as a sandbox around the production database.
+The current v1.7 test layer is additive and designed as a sandbox around the production database.
 
 ### Test behavior
 - Search linked Discord accounts by display name or Discord ID and select testers.
@@ -15,4 +15,8 @@ The current v1.6 test layer is additive and designed as a sandbox around the pro
 - No database wipe is required.
 
 ### Important
-Deploy the complete package together. Do not mix the older v1.3 test-layer files with the v1.6 production UI.
+Deploy the complete package together. Do not mix the older v1.3 test-layer files with the v1.7 production UI.
+
+
+### Moderator behavior
+Moderators may create and publish tournament matches while a test run is active; those matches are automatically tagged to the active test run. Starting/ending tests and test funding/reset operations remain Owner/Admin only.
