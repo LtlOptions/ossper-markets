@@ -1552,12 +1552,29 @@ app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
 });
 
 app.get("/api/admin/test/history", adminOrModerator, async (_req,res)=>{
-  const q=await pool.query(`SELECT tr.*,
-    COALESCE((SELECT COUNT(*) FROM trades t WHERE t.test_run_id=tr.id),0)::int AS trades,
-    COALESCE((SELECT SUM(gross) FROM trades t WHERE t.test_run_id=tr.id),0) AS volume
-    FROM test_runs tr ORDER BY started_at DESC LIMIT 25`);
-  res.set("Cache-Control","no-store");
-  res.json(q.rows.map(r=>({...r,volume:Number(r.volume)})));
+  try{
+    const runs=await pool.query(`SELECT tr.id,tr.status,tr.label,tr.started_by,tr.started_at,tr.ended_by,tr.ended_at
+      FROM test_runs tr ORDER BY tr.started_at DESC LIMIT 25`);
+    const rows=[];
+    for(const r of runs.rows){
+      let trades=0, volume=0, events=0;
+      try{
+        const q=await pool.query(`SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume
+          FROM trades WHERE test_run_id=$1`,[r.id]);
+        trades=Number(q.rows[0]?.trades||0); volume=Number(q.rows[0]?.volume||0);
+      }catch(e){ /* keep the run visible even if legacy trade rows lack test linkage */ }
+      try{
+        const q=await pool.query(`SELECT COUNT(*)::int AS events FROM audit_logs WHERE test_run_id=$1`,[r.id]);
+        events=Number(q.rows[0]?.events||0);
+      }catch(e){}
+      rows.push({...r,trades,volume,events});
+    }
+    res.set("Cache-Control","no-store");
+    res.json(rows);
+  }catch(e){
+    console.error("test history error:",e);
+    res.status(500).json({error:"Unable to load recent test performance."});
+  }
 });
 
 app.get("/admin-test", (_req, res) => res.sendFile(path.join(publicDir, "test-admin.html")));

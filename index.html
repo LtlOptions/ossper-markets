@@ -23,8 +23,17 @@ input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-
 @media(max-width:850px){.settingsDropdown:hover .menu{opacity:0;visibility:hidden;pointer-events:none}.settingsDropdown.open .menu{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0)}.settingsDropdown details[open] .menu{opacity:1;visibility:visible;pointer-events:auto;transform:translateY(0)}.nav{padding:11px 14px}.navlinks{display:none}.hero{display:block}.hero h1{font-size:36px}.portfolio{grid-template-columns:1fr 1fr}.markets,.cardGrid,.settingsGrid{grid-template-columns:1fr}.activityRow{grid-template-columns:1fr auto}.activityRow>*:nth-child(n+3){display:none}.positionRow{grid-template-columns:1.5fr .7fr .8fr .8fr}.positionRow>*:nth-child(n+5){display:none}main{padding:28px 14px 70px}}
 @media(max-width:520px){.homeGrid{grid-template-columns:1fr}.homeActions{flex-direction:column}.portfolio{grid-template-columns:1fr}.sides{grid-template-columns:1fr 1fr}.market{padding:16px}.price{font-size:24px}.hero h1{font-size:32px}}
 .settingsGrid{display:flex;flex-direction:column;gap:10px}.settingsGroup{border:1px solid color-mix(in srgb,var(--line2) 78%,transparent);background:color-mix(in srgb,var(--panel) 44%,transparent);backdrop-filter:blur(14px);border-radius:12px;overflow:hidden}.settingsGroup summary{list-style:none;cursor:pointer;padding:15px 17px;font-weight:850;font-size:13px;display:flex;justify-content:space-between;align-items:center;color:var(--text)}.settingsGroup summary::-webkit-details-marker{display:none}.settingsGroup summary:after{content:'+';color:var(--accent2);font-size:18px;line-height:1}.settingsGroup[open] summary:after{content:'−'}.settingsGroup summary span{color:var(--muted);font-size:10px;font-weight:600;margin-left:auto;margin-right:12px}.settingsGroupBody{padding:0 12px 12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.settingsGroupBody .settingsCard{background:rgba(4,9,15,.22);backdrop-filter:none;margin:0}.themeSwatches{display:flex;flex-wrap:wrap;gap:7px}.themeSwatches .option{min-width:84px}.settingsGroup:first-of-type{box-shadow:0 10px 34px rgba(0,0,0,.14)}
+/* v1.7.6 mobile navigation: keep every primary page reachable on phones */
+.mobileNavWrap{display:none;position:relative}
+.mobileNavBtn{display:none;border:1px solid var(--line2);background:color-mix(in srgb,var(--panel2) 68%,transparent);color:var(--soft);border-radius:7px;padding:7px 9px;font-size:15px;line-height:1;cursor:pointer}
+.mobileNavMenu{position:absolute;right:0;top:40px;width:210px;max-width:calc(100vw - 28px);padding:7px;background:color-mix(in srgb,var(--panel) 76%,transparent);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow);backdrop-filter:blur(18px);z-index:80;display:none}
+.mobileNavMenu.open{display:block}
+.mobileNavTitle{padding:7px 10px 8px;color:var(--muted);font-size:9px;letter-spacing:.14em;text-transform:uppercase;font-weight:900}
+.mobileNavMenu button,.mobileNavMenu a{display:block;width:100%;text-align:left;padding:10px;color:var(--soft);font-size:12px;border:0;background:transparent;border-radius:7px;text-decoration:none}
+.mobileNavMenu button:hover,.mobileNavMenu a:hover,.mobileNavMenu button.active{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--text)}
+.mobileNavDivider{height:1px;background:var(--line);margin:5px 4px}
 .notificationBtn{position:relative;border:1px solid var(--line2);background:var(--panel2);color:var(--soft);border-radius:7px;padding:7px 9px;font-size:14px}.notificationBadge{position:absolute;right:-5px;top:-5px;min-width:16px;height:16px;border-radius:999px;background:var(--sell);color:white;font-size:9px;font-weight:900;display:flex;align-items:center;justify-content:center;padding:0 4px}.notificationPanel{position:absolute;right:0;top:40px;width:360px;max-width:calc(100vw - 28px);background:var(--panel);border:1px solid var(--line2);box-shadow:var(--shadow);border-radius:10px;padding:7px;z-index:50}.notificationHead{display:flex;justify-content:space-between;align-items:center;padding:8px 9px;border-bottom:1px solid var(--line)}.notificationItem{padding:10px 9px;border-radius:7px;border-bottom:1px solid #14263b;cursor:pointer}.notificationItem:hover{background:#112238}.notificationItem.unread{background:rgba(79,145,255,.08)}.notificationItem b{font-size:11px}.notificationItem p{margin:4px 0;color:var(--muted);font-size:10px;line-height:1.45}.notificationItem time{font-size:9px;color:#6f85a2}.helpGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.helpCard{border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:18px}.helpCard h3{margin:0 0 7px;font-size:15px}.helpCard p,.helpCard li{color:var(--muted);font-size:11px;line-height:1.6}.helpCard ul{margin:7px 0 0;padding-left:17px}.welcome{border:1px solid var(--line2);background:linear-gradient(135deg,rgba(79,145,255,.10),rgba(10,20,34,.88));border-radius:11px;padding:15px 17px;margin:0 0 18px;display:flex;justify-content:space-between;gap:18px;align-items:center}.welcome h3{margin:0 0 4px;font-size:14px}.welcome p{margin:0;color:var(--muted);font-size:11px}.welcome button{border:1px solid var(--accent2);background:transparent;color:var(--text);border-radius:7px;padding:7px 9px;font-size:10px;font-weight:800}.customSwatches{display:flex;gap:7px;flex-wrap:wrap}.swatch{width:30px;height:30px;border-radius:7px;border:2px solid var(--line2);cursor:pointer}.customBgInput{width:100%;background:var(--panel2);color:var(--soft);border:1px solid var(--line2);border-radius:7px;padding:8px;font-size:11px}.outcomeGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.outcomeSide{border:1px solid var(--line2);border-radius:9px;padding:13px;background:rgba(7,15,25,.72)}.outcomeSide .outcomeName{font-size:11px;font-weight:800;min-height:28px}.outcomeSide .outcomePrice{font-size:25px;font-weight:900;margin:7px 0}.outcomeSide button{width:100%;border:1px solid rgba(34,232,121,.62);background:rgba(5,24,16,.72);color:var(--buy);padding:9px;border-radius:7px;font-weight:800;font-size:11px}.outcomeSide button.sell{margin-top:6px;border-color:rgba(255,54,91,.65);background:rgba(31,7,14,.72);color:var(--sell)}
-@media(max-width:850px){.settingsGroupBody{grid-template-columns:1fr}.helpGrid{grid-template-columns:1fr}.outcomeGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.notificationPanel{right:-50px}}@media(max-width:600px){.outcomeGrid{grid-template-columns:1fr}.welcome{align-items:flex-start;flex-direction:column}.notificationPanel{right:-95px}}
+@media(max-width:850px){.settingsGroupBody{grid-template-columns:1fr}.helpGrid{grid-template-columns:1fr}.outcomeGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.notificationPanel{right:0;max-width:min(360px,calc(100vw - 24px))}.mobileNavWrap{display:block}}@media(max-width:600px){.outcomeGrid{grid-template-columns:1fr}.welcome{align-items:flex-start;flex-direction:column}.notificationPanel{position:fixed;top:62px;right:12px;left:12px;width:auto;max-width:none}.mobileNavMenu{right:-4px;max-width:calc(100vw - 24px)}}
 /* v1.7.5 solid-surface completion: every major interface surface becomes opaque */
 body.solidSurfaces .topbar,
 body.solidSurfaces .menu,
@@ -55,6 +64,72 @@ body.solidSurfaces .tournamentCard,
 body.solidSurfaces .settingsGroup,
 body.solidSurfaces .settingsCard { background-image:none !important; }
 body.solidSurfaces .settingsGroupBody .settingsCard { background:var(--panel2) !important; }
+body:not(.solidSurfaces) .topbar,
+body:not(.solidSurfaces) .menu,
+body:not(.solidSurfaces) .notificationPanel,
+body:not(.solidSurfaces) .mobileNavMenu,
+body:not(.solidSurfaces) .homeHero,
+body:not(.solidSurfaces) .homeDiscord,
+body:not(.solidSurfaces) .homeCard,
+body:not(.solidSurfaces) .homeEvent,
+body:not(.solidSurfaces) .homeActivity,
+body:not(.solidSurfaces) .market,
+body:not(.solidSurfaces) .infoCard,
+body:not(.solidSurfaces) .tournamentCard,
+body:not(.solidSurfaces) .portfolio,
+body:not(.solidSurfaces) .metric,
+body:not(.solidSurfaces) .settingsGroup,
+body:not(.solidSurfaces) .settingsCard,
+body:not(.solidSurfaces) .helpCard,
+body:not(.solidSurfaces) .welcome,
+body:not(.solidSurfaces) .outcomeSide,
+body:not(.solidSurfaces) .notificationItem,
+body:not(.solidSurfaces) .side,
+body:not(.solidSurfaces) .activity,
+body:not(.solidSurfaces) .positionTable,
+body:not(.solidSurfaces) .aboutBox,
+body:not(.solidSurfaces) .layoutItem,
+body:not(.solidSurfaces) .modal {
+  background-color:color-mix(in srgb,var(--panel) 42%,transparent) !important;
+  background-image:none;
+  backdrop-filter:blur(18px) saturate(125%);
+}
+body:not(.solidSurfaces) .settingsGroupBody .settingsCard{
+  background-color:color-mix(in srgb,var(--panel2) 28%,transparent) !important;
+  backdrop-filter:blur(14px) saturate(120%);
+}
+body:not(.solidSurfaces) .settingSelect,
+body:not(.solidSurfaces) .customBgInput,
+body:not(.solidSurfaces) .option,
+body:not(.solidSurfaces) .layoutBtns button{
+  background-color:color-mix(in srgb,var(--panel2) 48%,transparent) !important;
+  backdrop-filter:blur(12px);
+}
+body:not(.solidSurfaces) .side,
+body:not(.solidSurfaces) .outcomeSide{
+  background-color:color-mix(in srgb,var(--panel2) 34%,transparent) !important;
+}
+body.solidSurfaces .settingSelect,
+body.solidSurfaces .customBgInput,
+body.solidSurfaces .option,
+body.solidSurfaces .layoutItem,
+body.solidSurfaces .layoutBtns button{
+  background:var(--panel2) !important;
+  backdrop-filter:none !important;
+}
+body.solidSurfaces .activity,
+body.solidSurfaces .positionTable,
+body.solidSurfaces .aboutBox,
+body.solidSurfaces .modal{
+  background:var(--panel) !important;
+  backdrop-filter:none !important;
+}
+@media(max-width:850px){
+  .mobileNavBtn{display:block}
+  .navright{gap:7px}
+  .balanceMini{display:none}
+}
+
 </style>
 </head>
 <body>
@@ -64,7 +139,7 @@ body.solidSurfaces .settingsGroupBody .settingsCard { background:var(--panel2) !
     <button data-nav="home" onclick="go('home')">Home</button><button data-nav="markets" onclick="go('markets')">Markets</button><button data-nav="tournaments" onclick="go('tournaments')">Tournaments</button><button data-nav="activity" onclick="go('activity')">Activity</button><button data-nav="portfolio" onclick="go('portfolio')">Portfolio</button>
     <div class="dropdown settingsDropdown" id="settingsDropdown"><button class="dropbtn" onclick="toggleSettingsMenu(event)">Settings ▾</button><div class="menu"><button onclick="go('settings');closeSettingsMenu()">Preferences</button><a href="/admin" onclick="rememberAppLocation()">Admin</a><button onclick="go('help');closeSettingsMenu()">Help & How it works</button><button onclick="go('about');closeSettingsMenu()">About Ossper</button></div></div>
   </div>
-  <div class="navright"><div class="dropdown"><button class="notificationBtn" onclick="toggleNotifications()" aria-label="Notifications">🔔<span id="notificationBadge" class="notificationBadge" style="display:none">0</span></button><div class="notificationPanel" id="notificationPanel" style="display:none"><div class="notificationHead"><b>Notifications</b><button class="option" style="padding:5px 7px" onclick="markAllNotificationsRead()">Mark all read</button></div><div id="notificationList"></div></div></div><div class="liveIndicator" id="liveIndicator"><span></span> LIVE</div><div class="balanceMini">Balance <b id="miniBalance">$500.00</b></div><div class="accountArea" id="accountArea"><button class="accountBtn" id="accountBtn" onclick="toggleAccountMenu()">Guest</button><div class="menu accountMenu" id="accountMenu" style="display:none"><div id="accountMenuBody"></div></div></div></div>
+  <div class="navright"><div class="mobileNavWrap"><button class="mobileNavBtn" onclick="toggleMobileNav(event)" aria-label="Open navigation">☰</button><div class="mobileNavMenu" id="mobileNavMenu"><div class="mobileNavTitle">Ossper</div><button data-mobile-nav="home" onclick="go('home');closeMobileNav()">Home</button><button data-mobile-nav="markets" onclick="go('markets');closeMobileNav()">Markets</button><button data-mobile-nav="tournaments" onclick="go('tournaments');closeMobileNav()">Tournaments</button><button data-mobile-nav="activity" onclick="go('activity');closeMobileNav()">Activity</button><button data-mobile-nav="portfolio" onclick="go('portfolio');closeMobileNav()">Portfolio</button><div class="mobileNavDivider"></div><button data-mobile-nav="settings" onclick="go('settings');closeMobileNav()">Settings</button><a href="/admin" onclick="rememberAppLocation();closeMobileNav()">Admin</a><button onclick="go('help');closeMobileNav()">Help & How it works</button><button onclick="go('about');closeMobileNav()">About Ossper</button></div></div><div class="dropdown"><button class="notificationBtn" onclick="toggleNotifications()" aria-label="Notifications">🔔<span id="notificationBadge" class="notificationBadge" style="display:none">0</span></button><div class="notificationPanel" id="notificationPanel" style="display:none"><div class="notificationHead"><b>Notifications</b><button class="option" style="padding:5px 7px" onclick="markAllNotificationsRead()">Mark all read</button></div><div id="notificationList"></div></div></div><div class="liveIndicator" id="liveIndicator"><span></span> LIVE</div><div class="balanceMini">Balance <b id="miniBalance">$500.00</b></div><div class="accountArea" id="accountArea"><button class="accountBtn" id="accountBtn" onclick="toggleAccountMenu()">Guest</button><div class="menu accountMenu" id="accountMenu" style="display:none"><div id="accountMenuBody"></div></div></div></div>
 </nav></header>
 <div id="freezeBanner" class="freezeBanner" style="display:none"><b>Trading paused</b><span id="freezeReason">Ossper is temporarily frozen by administration.</span></div>
 <main id="dashboard">
@@ -173,7 +248,10 @@ async function toggleBrowserNotifications(){
 function renderLayoutList(){const labels={portfolio:"Portfolio summary",markets:"Markets",tournaments:"Tournament calendar",activity:"Recent activity"};const el=document.getElementById("layoutList");if(!el)return;el.innerHTML=prefs.order.map((x,i)=>`<div class="layoutItem"><span>${labels[x]}</span><span class="layoutBtns"><button ${i===0?"disabled":""} onclick="moveSection(${i},-1)">↑</button><button ${i===prefs.order.length-1?"disabled":""} onclick="moveSection(${i},1)">↓</button></span></div>`).join("")}
 function moveSection(i,dir){const j=i+dir;if(j<0||j>=prefs.order.length)return;[prefs.order[i],prefs.order[j]]=[prefs.order[j],prefs.order[i]];savePrefs()}
 function applyOrder(){const host=document.getElementById("marketsSections");if(!host)return;prefs.order.forEach(x=>{const el=host.querySelector(`[data-section="${x}"]`);if(el)host.appendChild(el)})}
-function go(view){document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.dataset.view===view));document.querySelectorAll("[data-nav]").forEach(b=>b.classList.toggle("active",b.dataset.nav===view));if(location.hash!=="#"+view)history.replaceState(null,"","#"+view);window.scrollTo({top:0,behavior:"smooth"});if(view==="portfolio")renderPortfolio();if(view==="activity")renderActivityFull();if(view==="tournaments")renderTournamentsFull();if(view==="home")renderHome();if(view==="settings"){renderLayoutList();renderAccount()}if(view==="help")loadNotifications()}
+function toggleMobileNav(e){if(e)e.stopPropagation();const m=document.getElementById("mobileNavMenu");if(m)m.classList.toggle("open")}
+function closeMobileNav(){const m=document.getElementById("mobileNavMenu");if(m)m.classList.remove("open")}
+document.addEventListener("click",e=>{if(!e.target.closest(".mobileNavWrap"))closeMobileNav()});
+function go(view){closeMobileNav();document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.dataset.view===view));document.querySelectorAll("[data-nav]").forEach(b=>b.classList.toggle("active",b.dataset.nav===view));document.querySelectorAll("[data-mobile-nav]").forEach(b=>b.classList.toggle("active",b.dataset.mobileNav===view));if(location.hash!=="#"+view)history.replaceState(null,"","#"+view);window.scrollTo({top:0,behavior:"smooth"});if(view==="portfolio")renderPortfolio();if(view==="activity")renderActivityFull();if(view==="tournaments")renderTournamentsFull();if(view==="home")renderHome();if(view==="settings"){renderLayoutList();renderAccount()}if(view==="help")loadNotifications()}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 function money(v){return "$"+Number(v||0).toFixed(2)}function prob(v){return "$"+Number(v||0).toFixed(3)}function localDate(v,opts={}){return new Date(v).toLocaleString([], {...opts,hour12:prefs.timeFormat!=="24"})}function localTime(v,opts={}){return new Date(v).toLocaleTimeString([], {...opts,hour12:prefs.timeFormat!=="24"})}
 function posFor(s,side){const positions=Array.isArray(s?.account?.positions)?s.account.positions:[];return positions.find(p=>p.side===side)||null}
