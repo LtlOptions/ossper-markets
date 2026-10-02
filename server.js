@@ -83,11 +83,11 @@ async function adminOnly(req, res, next) {
     const accountId = await sessionAccountId(req);
     if (!accountId) return res.status(401).json({ error: "Admin authentication required." });
     const q = await pool.query(`
-      SELECT a.id, a.discord_id, ar.role
+      SELECT a.id, a.discord_id, LOWER(ar.role) AS role
       FROM accounts a
       JOIN admin_roles ar ON ar.discord_id=a.discord_id AND ar.revoked_at IS NULL
       WHERE a.id=$1
-      ORDER BY CASE ar.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 9 END
+      ORDER BY CASE LOWER(ar.role) WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 ELSE 9 END
       LIMIT 1
     `, [accountId]);
     if (!q.rows.length) return res.status(403).json({ error: "Your Discord account is not an Ossper admin." });
@@ -100,19 +100,19 @@ async function adminOnly(req, res, next) {
 
 async function ownerOnly(req, res, next) {
   if (req.admin?.source === "admin_key") return next();
-  if (req.admin?.role === "owner") return next();
+  if (String(req.admin?.role || "").toLowerCase() === "owner") return next();
   return res.status(403).json({ error: "Owner access required." });
 }
 
 async function adminOrModerator(req, res, next) {
   if (req.admin?.source === "admin_key") return next();
-  if (["owner","admin","moderator"].includes(req.admin?.role)) return next();
+  if (["owner","admin","moderator"].includes(String(req.admin?.role || "").toLowerCase())) return next();
   return res.status(403).json({ error: "Admin or moderator access required." });
 }
 
 async function adminOrOwner(req, res, next) {
   if (req.admin?.source === "admin_key") return next();
-  if (["owner","admin"].includes(req.admin?.role)) return next();
+  if (["owner","admin"].includes(String(req.admin?.role || "").toLowerCase())) return next();
   return res.status(403).json({ error: "Admin access required." });
 }
 
@@ -1061,7 +1061,7 @@ app.get("/api/admin/roles", adminOnly, async (_req, res) => {
 
 app.post("/api/admin/roles", adminOnly, ownerOnly, async (req, res) => {
   const discordId = String(req.body?.discordId || '').trim();
-  const role = String(req.body?.role || 'admin').toLowerCase();
+  const role = String(req.body?.role || 'admin').trim().toLowerCase();
   if (!/^\d{15,22}$/.test(discordId)) return res.status(400).json({ error: "Enter a valid Discord user ID." });
   if (!["admin","moderator"].includes(role)) return res.status(400).json({ error: "Role must be Admin or Moderator." });
   const existing = await pool.query("SELECT id, role FROM admin_roles WHERE discord_id=$1 AND revoked_at IS NULL", [discordId]);
