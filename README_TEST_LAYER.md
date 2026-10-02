@@ -1,23 +1,18 @@
 # Ossper Controlled Test Layer
 
-This patch is additive to the existing Ossper v1.3 backend.
+The current v1.6 test layer is additive and designed as a sandbox around the production database.
 
-Files in this package:
-- `server.js` — backend with controlled test-run support and additive PostgreSQL migrations.
-- `test-admin.html` — separate test-control page at `/admin-test`.
-
-Important deployment rule:
-- Replace the deployed `server.js` with this `server.js`.
-- Upload `test-admin.html` alongside it.
-- Do NOT replace `index.html` or the existing `admin.html` with this package. That preserves the current public/admin UI.
+### Test behavior
+- Search linked Discord accounts by display name or Discord ID and select testers.
+- Selected accounts begin at $500 with pre-test balances/positions snapshotted.
+- Test trades, test funds, resets, and audit events are tagged with the test-run ID.
+- Non-enrolled accounts cannot trade while a controlled test is active.
+- Test participants can create tournament matches while the test is active.
+- Test-created matches/markets are tagged to the active test run and isolated from normal users.
+- Ending the test restores participating account state and pre-existing market/match state.
+- Test-created markets are marked VOID and their test positions are removed; test trade/audit records remain for analysis.
+- Completed test history is retained in PostgreSQL.
 - No database wipe is required.
 
-Test behavior:
-- Owner/admin starts a named test with selected Discord user IDs.
-- Selected accounts begin the test at $500 with active positions cleared for the run.
-- Original balances/positions and market/match state are snapshotted.
-- Test trades, test funding, test resets, and test audit events are tagged with the test run ID.
-- Non-enrolled accounts are blocked from trading while a controlled test is active.
-- New markets/matches cannot be created during a controlled test.
-- Ending the test restores enrolled account balances/positions and market/match state.
-- Test records remain in PostgreSQL for analysis.
+### Important
+Deploy the complete package together. Do not mix the older v1.3 test-layer files with the v1.6 production UI.

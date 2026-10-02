@@ -104,6 +104,18 @@ async function ownerOnly(req, res, next) {
   return res.status(403).json({ error: "Owner access required." });
 }
 
+async function adminOrModerator(req, res, next) {
+  if (req.admin?.source === "admin_key") return next();
+  if (["owner","admin","moderator"].includes(req.admin?.role)) return next();
+  return res.status(403).json({ error: "Admin or moderator access required." });
+}
+
+async function adminOrOwner(req, res, next) {
+  if (req.admin?.source === "admin_key") return next();
+  if (["owner","admin"].includes(req.admin?.role)) return next();
+  return res.status(403).json({ error: "Admin access required." });
+}
+
 function setAdminCookie(res, token) {
   res.setHeader("Set-Cookie", `ossper_admin=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800`);
 }
@@ -294,7 +306,7 @@ async function initDb() {
       granted_by TEXT NOT NULL DEFAULT 'system',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       revoked_at TIMESTAMPTZ,
-      CHECK (role IN ('owner','admin'))
+      CHECK (role IN ('owner','admin','moderator'))
     );
     CREATE INDEX IF NOT EXISTS admin_roles_discord_idx ON admin_roles(discord_id);
     CREATE UNIQUE INDEX IF NOT EXISTS admin_roles_active_discord_idx ON admin_roles(discord_id) WHERE revoked_at IS NULL;
@@ -351,6 +363,38 @@ async function initDb() {
   await pool.query("DELETE FROM sessions WHERE expires_at <= NOW()");
 
   // Safe migrations for databases created by v0.6.1.
+  await pool.query(`ALTER TABLE admin_roles DROP CONSTRAINT IF EXISTS admin_roles_role_check`);
+  await pool.query(`ALTER TABLE admin_roles ADD CONSTRAINT admin_roles_role_check CHECK (role IN ('owner','admin','moderator'))`);
+  await pool.query(`ALTER TABLE matches ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS market_type TEXT NOT NULL DEFAULT 'DYNAMIC'`);
+  await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS fixed_yes_price NUMERIC(10,4)`);
+  await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_market_type_check`);
+  await pool.query(`ALTER TABLE markets ADD CONSTRAINT markets_market_type_check CHECK (market_type IN ('DYNAMIC','FIXED'))`);
+  await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_fixed_yes_price_check`);
+  await pool.query(`ALTER TABLE markets ADD CONSTRAINT markets_fixed_yes_price_check CHECK (fixed_yes_price IS NULL OR (fixed_yes_price >= 0.01 AND fixed_yes_price <= 0.99))`);
+  await pool.query(`ALTER TABLE test_market_snapshots ADD COLUMN IF NOT EXISTS market_type TEXT`);
+  await pool.query(`ALTER TABLE test_market_snapshots ADD COLUMN IF NOT EXISTS fixed_yes_price NUMERIC(10,4)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS markets_test_run_idx ON markets(test_run_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS matches_test_run_idx ON matches(test_run_id)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS notifications (
+    id BIGSERIAL PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    type TEXT NOT NULL DEFAULT 'INFO',
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    market_id INTEGER REFERENCES markets(id) ON DELETE SET NULL,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'INFO'`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS title TEXT`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS message TEXT`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS market_id INTEGER`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS notifications_account_created_idx ON notifications(account_id, created_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS notifications_unread_idx ON notifications(account_id, read_at)`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS match_id INTEGER REFERENCES matches(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
@@ -421,7 +465,7 @@ async function testAudit(actor, action, details, testRunId = null, marketId = nu
 async function snapshotTestState(client, runId, memberIds) {
   const markets = await client.query("SELECT id, yes_price, status, close_at, result FROM markets");
   for (const m of markets.rows) {
-    await client.query(`INSERT INTO test_market_snapshots (test_run_id, market_id, yes_price, status, close_at, result) VALUES ($1,$2,$3,$4,$5,$6)`, [runId, m.id, m.yes_price, m.status, m.close_at, m.result]);
+    await client.query(`INSERT INTO test_market_snapshots (test_run_id, market_id, yes_price, status, close_at, result, market_type, fixed_yes_price) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, [runId, m.id, m.yes_price, m.status, m.close_at, m.result, m.market_type || 'DYNAMIC', m.fixed_yes_price]);
   }
   const matches = await client.query("SELECT id, status FROM matches");
   for (const m of matches.rows) {
@@ -459,7 +503,7 @@ async function restoreTestState(client, runId) {
   }
   const markets = await client.query("SELECT market_id, yes_price, status, close_at, result FROM test_market_snapshots WHERE test_run_id=$1", [runId]);
   for (const m of markets.rows) {
-    await client.query("UPDATE markets SET yes_price=$1,status=$2,close_at=$3,result=$4,updated_at=NOW() WHERE id=$5", [m.yes_price,m.status,m.close_at,m.result,m.market_id]);
+    await client.query("UPDATE markets SET yes_price=$1,status=$2,close_at=$3,result=$4,market_type=COALESCE($5,'DYNAMIC'),fixed_yes_price=$6,updated_at=NOW() WHERE id=$7", [m.yes_price,m.status,m.close_at,m.result,m.market_type,m.fixed_yes_price,m.market_id]);
   }
   const matches = await client.query("SELECT match_id,status FROM test_match_snapshots WHERE test_run_id=$1", [runId]);
   for (const m of matches.rows) await client.query("UPDATE matches SET status=$1,updated_at=NOW() WHERE id=$2", [m.status,m.match_id]);
@@ -474,6 +518,13 @@ async function assertSystemActive() {
   const control = await getSystemControl();
   if (control.frozen) throw new Error(`Ossper is frozen by administration${control.reason ? `: ${control.reason}` : '.'}`);
   return control;
+}
+
+async function createNotification(client, { accountId, type = 'INFO', title, message, marketId = null }) {
+  await client.query(
+    `INSERT INTO notifications (account_id, type, title, message, market_id) VALUES ($1,$2,$3,$4,$5)`,
+    [accountId, type, String(title).slice(0, 180), String(message).slice(0, 1000), marketId]
+  );
 }
 
 async function addLedgerEntry(client, { accountId, entryType, amount, balanceBefore, balanceAfter, marketId = null, tradeId = null, reference = null, details = {}, testRunId = null }) {
@@ -581,8 +632,10 @@ function projectPrice(yesPrice, liquidity, side, action, quantity) {
 }
 
 function quoteForMarket(market, side, action, quantity) {
-  const yes = Number(market.yes_price);
-  const endYes = projectPrice(yes, market.liquidity, side, action, quantity);
+  const yes = Number(market.market_type === 'FIXED' && market.fixed_yes_price != null ? market.fixed_yes_price : market.yes_price);
+  const endYes = market.market_type === 'FIXED'
+    ? yes
+    : projectPrice(yes, market.liquidity, side, action, quantity);
   const startPrice = side === "YES" ? yes : 1 - yes;
   const endPrice = side === "YES" ? endYes : 1 - endYes;
   const avgPrice = (startPrice + endPrice) / 2;
@@ -873,12 +926,18 @@ app.get("/api/markets", async (req, res) => {
   if (!accountId) return res.status(400).json({ error: "Missing account." });
   await ensureAccount(accountId);
   await closeExpiredMarkets();
-  const q = await pool.query("SELECT * FROM markets WHERE status <> 'DRAFT' ORDER BY id DESC");
+  const activeTest = await getActiveTestForAccount(accountId);
+  const where = activeTest
+    ? "status <> 'DRAFT' AND (test_run_id IS NULL OR test_run_id=$1)"
+    : "status <> 'DRAFT' AND test_run_id IS NULL";
+  const params = activeTest ? [activeTest.id] : [];
+  const q = await pool.query(`SELECT * FROM markets WHERE ${where} ORDER BY id DESC`, params);
   const out = [];
   for (const m of q.rows) {
     const snap = await marketSnapshot(m.id, accountId);
-    out.push(snap);
+    if (snap) out.push(snap);
   }
+  res.set("Cache-Control", "no-store");
   res.json(out);
 });
 
@@ -888,6 +947,11 @@ app.get("/api/market/:id", async (req, res) => {
   await ensureAccount(accountId);
   const snap = await marketSnapshot(Number(req.params.id), accountId);
   if (!snap) return res.status(404).json({ error: "Market not found." });
+  const activeTest = await getActiveTestForAccount(accountId);
+  if (snap.market.test_run_id && (!activeTest || String(snap.market.test_run_id) !== String(activeTest.id))) {
+    return res.status(404).json({ error: "Market not found." });
+  }
+  res.set("Cache-Control", "no-store");
   res.json(snap);
 });
 
@@ -934,6 +998,30 @@ app.get("/api/system", async (_req, res) => {
   res.json({ frozen: Boolean(control.frozen), reason: control.reason || '', changedAt: control.changed_at });
 });
 
+app.get("/api/notifications", async (req, res) => {
+  const accountId = await requestAccountId(req);
+  if (!accountId) return res.json({ notifications: [], unread: 0 });
+  const q = await pool.query(
+    `SELECT id, type, title, message, market_id, read_at, created_at
+     FROM notifications WHERE account_id=$1 ORDER BY created_at DESC LIMIT 50`,
+    [accountId]
+  );
+  const unread = q.rows.filter(n => !n.read_at).length;
+  res.set("Cache-Control", "no-store");
+  res.json({ notifications: q.rows, unread });
+});
+app.post("/api/notifications/:id/read", async (req, res) => {
+  const accountId = await requestAccountId(req);
+  if (!accountId) return res.status(401).json({ error: "Missing account." });
+  await pool.query("UPDATE notifications SET read_at=COALESCE(read_at,NOW()) WHERE id=$1 AND account_id=$2", [Number(req.params.id), accountId]);
+  res.json({ ok: true });
+});
+app.post("/api/notifications/read-all", async (req, res) => {
+  const accountId = await requestAccountId(req);
+  if (!accountId) return res.status(401).json({ error: "Missing account." });
+  await pool.query("UPDATE notifications SET read_at=NOW() WHERE account_id=$1 AND read_at IS NULL", [accountId]);
+  res.json({ ok: true });
+});
 app.post("/api/admin/bootstrap", async (req, res) => {
   if (!ADMIN_BOOTSTRAP_ENABLED) return res.status(503).json({ error: "Admin bootstrap is unavailable." });
   const accountId = await sessionAccountId(req);
@@ -961,19 +1049,21 @@ app.get("/api/admin/roles", adminOnly, async (_req, res) => {
     FROM admin_roles ar
     LEFT JOIN accounts a ON a.discord_id=ar.discord_id
     WHERE ar.revoked_at IS NULL
-    ORDER BY CASE ar.role WHEN 'owner' THEN 1 ELSE 2 END, ar.created_at ASC
+    ORDER BY CASE ar.role WHEN 'owner' THEN 1 WHEN 'admin' THEN 2 WHEN 'moderator' THEN 3 ELSE 9 END, ar.created_at ASC
   `);
   res.json(q.rows);
 });
 
 app.post("/api/admin/roles", adminOnly, ownerOnly, async (req, res) => {
   const discordId = String(req.body?.discordId || '').trim();
+  const role = String(req.body?.role || 'admin').toLowerCase();
   if (!/^\d{15,22}$/.test(discordId)) return res.status(400).json({ error: "Enter a valid Discord user ID." });
+  if (!["admin","moderator"].includes(role)) return res.status(400).json({ error: "Role must be Admin or Moderator." });
   const existing = await pool.query("SELECT id, role FROM admin_roles WHERE discord_id=$1 AND revoked_at IS NULL", [discordId]);
-  if (existing.rows.length) return res.status(409).json({ error: "That Discord account already has an admin role." });
+  if (existing.rows.length) return res.status(409).json({ error: "That Discord account already has an active role." });
   const grantedBy = req.admin?.discordId || 'admin_key';
-  const q = await pool.query("INSERT INTO admin_roles (discord_id, role, granted_by) VALUES ($1,'admin',$2) RETURNING *", [discordId, grantedBy]);
-  await pool.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'ADMIN_ROLE_GRANTED',$2)", [req.admin?.accountId || 'admin', JSON.stringify({ discordId, role: 'admin', grantedBy })]);
+  const q = await pool.query("INSERT INTO admin_roles (discord_id, role, granted_by) VALUES ($1,$2,$3) RETURNING *", [discordId, role, grantedBy]);
+  await pool.query("INSERT INTO audit_logs (actor, action, details) VALUES ($1,'ADMIN_ROLE_GRANTED',$2)", [req.admin?.accountId || 'admin', JSON.stringify({ discordId, role, grantedBy })]);
   res.json({ ok: true, role: q.rows[0] });
 });
 
@@ -1044,8 +1134,9 @@ app.get("/api/admin/markets", adminOnly, async (_req, res) => {
   res.json(q.rows);
 });
 
-app.post("/api/admin/matches", adminOnly, async (req, res) => {
-  try { await assertSystemActive(); const activeTest = await getActiveTestRun(); if (activeTest) throw new Error("New tournament matches cannot be created while a controlled test is active."); } catch (e) { return res.status(423).json({ error: e.message }); }
+app.post("/api/admin/matches", adminOrModerator, async (req, res) => {
+  try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
+  const activeTest = await getActiveTestRun();
   const {
     eventName = "Ossper Weekly",
     eventDay,
@@ -1056,6 +1147,7 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
     closeAt = null,
     yesPrice = 0.50,
     liquidity = 100,
+    marketMode = "DYNAMIC",
   } = req.body || {};
 
   const day = String(eventDay || "").toUpperCase();
@@ -1065,9 +1157,11 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
   const event = String(eventName || "Ossper Weekly").trim();
   const price = Number(yesPrice);
   const depth = Number(liquidity);
+  const mode = String(marketMode || "DYNAMIC").toUpperCase();
 
   if (!["FRIDAY","SATURDAY","SUNDAY"].includes(day)) return res.status(400).json({ error: "Event day must be Friday, Saturday, or Sunday." });
   if (!["1v1","2v2"].includes(fmt)) return res.status(400).json({ error: "Format must be 1v1 or 2v2." });
+  if (!["DYNAMIC","FIXED"].includes(mode)) return res.status(400).json({ error: "Market mode must be Dynamic or Fixed Odds." });
   if (a.length < 2 || b.length < 2) return res.status(400).json({ error: "Both players/teams are required." });
   if (event.length < 2) return res.status(400).json({ error: "Event name is required." });
   if (!Number.isFinite(price) || price < 0.01 || price > 0.99) return res.status(400).json({ error: "YES starting price must be between 0.01 and 0.99." });
@@ -1077,21 +1171,21 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
   try {
     await client.query("BEGIN");
     const matchQ = await client.query(`
-      INSERT INTO matches (event_name, event_day, format, side_a_name, side_b_name, scheduled_at, status)
-      VALUES ($1,$2,$3,$4,$5,$6,'DRAFT') RETURNING *
-    `, [event, day, fmt, a, b, scheduledAt || null]);
+      INSERT INTO matches (event_name, event_day, format, side_a_name, side_b_name, scheduled_at, status, test_run_id)
+      VALUES ($1,$2,$3,$4,$5,$6,'DRAFT',$7) RETURNING *
+    `, [event, day, fmt, a, b, scheduledAt || null, activeTest?.id || null]);
     const match = matchQ.rows[0];
     const question = `Will ${a} beat ${b}?`;
     const description = `${event} · ${day} ${fmt}`;
     const marketQ = await client.query(`
-      INSERT INTO markets (match_id, question, description, yes_price, opening_yes_price, liquidity, status, close_at)
-      VALUES ($1,$2,$3,$4,$4,$5,'DRAFT',$6) RETURNING *
-    `, [match.id, question, description, price, depth, closeAt || null]);
+      INSERT INTO markets (match_id, question, description, yes_price, opening_yes_price, liquidity, status, close_at, market_type, fixed_yes_price, test_run_id)
+      VALUES ($1,$2,$3,$4,$4,$5,'DRAFT',$6,$7,$8,$9) RETURNING *
+    `, [match.id, question, description, price, depth, closeAt || null, mode, mode === 'FIXED' ? price : null, activeTest?.id || null]);
 
     await client.query(`
       INSERT INTO audit_logs (actor, action, market_id, details)
       VALUES ('admin','CREATE_MATCH_MARKET',$1,$2)
-    `, [marketQ.rows[0].id, JSON.stringify({ matchId: match.id, event, day, format: fmt, sideA: a, sideB: b, scheduledAt, closeAt, yesPrice: price, liquidity: depth })]);
+    `, [marketQ.rows[0].id, JSON.stringify({ matchId: match.id, event, day, format: fmt, sideA: a, sideB: b, scheduledAt, closeAt, yesPrice: price, liquidity: depth, marketMode: mode, testRunId: activeTest?.id || null })]);
 
     await client.query("COMMIT");
     res.json({ match, market: marketQ.rows[0] });
@@ -1103,7 +1197,7 @@ app.post("/api/admin/matches", adminOnly, async (req, res) => {
   }
 });
 
-app.post("/api/admin/matches/:id/publish", adminOnly, async (req, res) => {
+app.post("/api/admin/matches/:id/publish", adminOrModerator, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const id = Number(req.params.id);
   const client = await pool.connect();
@@ -1130,7 +1224,7 @@ app.post("/api/admin/matches/:id/publish", adminOnly, async (req, res) => {
   }
 });
 
-app.post("/api/admin/matches/:id/cancel", adminOnly, async (req, res) => {
+app.post("/api/admin/matches/:id/cancel", adminOrModerator, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const id = Number(req.params.id);
   const client = await pool.connect();
@@ -1176,11 +1270,14 @@ app.post("/api/admin/markets", adminOnly, async (req, res) => {
   res.json(q.rows[0]);
 });
 
-app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
+app.post("/api/admin/markets/:id/status", adminOrModerator, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const allowed = ["DRAFT","OPEN","TRADING","CLOSED","AWAITING_RESULT","RESOLVED","SETTLED","VOID"];
   const status = String(req.body?.status || "").toUpperCase();
   if (!allowed.includes(status)) return res.status(400).json({ error: "Invalid status." });
+  if (req.admin?.role === "moderator" && !["OPEN","TRADING","CLOSED","AWAITING_RESULT"].includes(status)) {
+    return res.status(403).json({ error: "Moderators cannot permanently settle, void, or otherwise rewrite market state." });
+  }
 
   const id = Number(req.params.id);
   const q = await pool.query("UPDATE markets SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *", [status, id]);
@@ -1198,10 +1295,11 @@ app.post("/api/admin/markets/:id/status", adminOnly, async (req, res) => {
   res.json(q.rows[0]);
 });
 
-app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
+app.post("/api/admin/markets/:id/result", adminOrModerator, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({ error: e.message }); }
   const result = String(req.body?.result || "").toUpperCase();
   if (!["YES","NO","VOID"].includes(result)) return res.status(400).json({ error: "Result must be YES, NO, or VOID." });
+  if (req.admin?.role === "moderator" && result === "VOID") return res.status(403).json({ error: "Moderators cannot void markets." });
 
   const id = Number(req.params.id);
   const client = await pool.connect();
@@ -1244,6 +1342,18 @@ app.post("/api/admin/markets/:id/result", adminOnly, async (req, res) => {
           reference: `SETTLE_${result}`, details: { side: p.side, quantity: Number(p.quantity), result }
         });
       }
+      const costBasis = Number((Number(p.quantity) * Number(p.avg_cost)).toFixed(4));
+      const pnl = Number((payout - costBasis).toFixed(4));
+      const marketQuestion = m.rows[0].question;
+      const payoutText = payout.toFixed(2);
+      const pnlText = `${pnl >= 0 ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`;
+      await createNotification(client, {
+        accountId: p.account_id,
+        type: 'SETTLEMENT',
+        title: result === 'VOID' ? 'Position voided' : 'Position settled',
+        message: `${marketQuestion} · ${p.quantity} ${p.side} contracts · Payout $${payoutText} · P/L ${pnlText}`,
+        marketId: id
+      });
       await client.query(
         "UPDATE positions SET quantity=0, avg_cost=0 WHERE account_id=$1 AND market_id=$2 AND side=$3",
         [p.account_id, id, p.side]
@@ -1280,9 +1390,25 @@ app.get("/api/admin/matches", adminOnly, async (_req, res) => {
   res.json(q.rows);
 });
 
-app.get("/api/admin/audit", adminOnly, async (_req, res) => {
-  const q = await pool.query("SELECT * FROM audit_logs ORDER BY id DESC LIMIT 200");
-  res.json(q.rows);
+app.get("/api/admin/audit", adminOnly, async (req, res) => {
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(10, Number.parseInt(req.query.pageSize, 10) || 40));
+  const action = String(req.query.action || '').trim();
+  const actor = String(req.query.actor || '').trim();
+  const marketId = Number.parseInt(req.query.marketId, 10);
+  const where = [];
+  const params = [];
+  if (action) { params.push(`%${action}%`); where.push(`action ILIKE $${params.length}`); }
+  if (actor) { params.push(`%${actor}%`); where.push(`actor ILIKE $${params.length}`); }
+  if (Number.isInteger(marketId) && marketId > 0) { params.push(marketId); where.push(`market_id=$${params.length}`); }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const countQ = await pool.query(`SELECT COUNT(*)::int AS total FROM audit_logs ${whereSql}`, params);
+  const total = Number(countQ.rows[0].total || 0);
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, pages);
+  const offset = (safePage - 1) * pageSize;
+  const rows = await pool.query(`SELECT * FROM audit_logs ${whereSql} ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, pageSize, offset]);
+  res.json({ rows: rows.rows, page: safePage, pageSize, pages, total });
 });
 
 
@@ -1296,6 +1422,13 @@ app.get("/api/admin/test", adminOnly, async (_req, res) => {
   return res.json({active:true, run, members:members.rows, stats:{trades:stats.rows[0].trades,volume:Number(stats.rows[0].volume),events:audits.rows[0].events}});
 });
 
+app.get("/api/admin/test/users", adminOnly, async (req,res)=>{
+  const q=String(req.query.q||'').trim().slice(0,80);
+  const params=[]; let where="WHERE discord_id IS NOT NULL";
+  if(q){ params.push(`%${q}%`); where+=" AND (display_name ILIKE $1 OR discord_id ILIKE $1)"; }
+  const rows=await pool.query(`SELECT id,discord_id,display_name,avatar_url FROM accounts ${where} ORDER BY LOWER(COALESCE(display_name,'')), discord_id LIMIT 20`,params);
+  res.set("Cache-Control","no-store"); res.json({users:rows.rows});
+});
 app.post("/api/admin/test/start", adminOnly, async (req, res) => {
   try { await assertSystemActive(); } catch (e) { return res.status(423).json({error:e.message}); }
   const existing = await getActiveTestRun();
@@ -1336,6 +1469,12 @@ app.post("/api/admin/test/end", adminOnly, async (req, res) => {
   try {
     await client.query("BEGIN");
     const stats = await client.query("SELECT COUNT(*)::int AS trades, COALESCE(SUM(gross),0) AS volume FROM trades WHERE test_run_id=$1", [run.id]);
+    const createdMarkets = await client.query("SELECT id FROM markets WHERE test_run_id=$1", [run.id]);
+    for (const cm of createdMarkets.rows) {
+      await client.query("DELETE FROM positions WHERE market_id=$1", [cm.id]);
+      await client.query("UPDATE markets SET status='VOID', result='VOID', updated_at=NOW() WHERE id=$1", [cm.id]);
+    }
+    await client.query("UPDATE matches SET status='CANCELLED', updated_at=NOW() WHERE test_run_id=$1", [run.id]);
     await restoreTestState(client, run.id);
     await client.query("UPDATE test_runs SET status='ENDED', ended_by=$1, ended_at=NOW() WHERE id=$2", [req.admin?.accountId || req.admin?.discordId || 'admin', run.id]);
     await client.query(`INSERT INTO audit_logs (actor,action,details,test_run_id) VALUES ($1,'TEST_ENDED',$2,$3)`, [req.admin?.accountId || req.admin?.discordId || 'admin', JSON.stringify({runId:run.id,trades:Number(stats.rows[0].trades),volume:Number(stats.rows[0].volume)}), run.id]);
@@ -1379,7 +1518,14 @@ app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
   res.json({ok:true,reset:members.rowCount});
 });
 
-app.get("/api/admin/test/history", adminOnly, async (_req,res)=>{const q=await pool.query(`SELECT tr.*,COALESCE((SELECT COUNT(*) FROM trades t WHERE t.test_run_id=tr.id),0)::int AS trades,COALESCE((SELECT SUM(gross) FROM trades t WHERE t.test_run_id=tr.id),0) AS volume FROM test_runs tr ORDER BY started_at DESC LIMIT 25`);res.json(q.rows.map(r=>({...r,volume:Number(r.volume)})));});
+app.get("/api/admin/test/history", adminOnly, async (_req,res)=>{
+  const q=await pool.query(`SELECT tr.*,
+    COALESCE((SELECT COUNT(*) FROM trades t WHERE t.test_run_id=tr.id),0)::int AS trades,
+    COALESCE((SELECT SUM(gross) FROM trades t WHERE t.test_run_id=tr.id),0) AS volume
+    FROM test_runs tr ORDER BY started_at DESC LIMIT 25`);
+  res.set("Cache-Control","no-store");
+  res.json(q.rows.map(r=>({...r,volume:Number(r.volume)})));
+});
 
 app.get("/admin-test", (_req, res) => res.sendFile(path.join(publicDir, "test-admin.html")));
 app.get("/admin", (_req, res) => {

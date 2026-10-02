@@ -1,17 +1,27 @@
-# Ossper Markets v1.5.1 — Demo Ready
+# Ossper Markets v1.6.0 — Sandbox + Community UX
 
 Community prediction market for tournament events. Virtual money only.
 
-## v1.5 changes
-- User help / onboarding guide explaining markets, prices, positions, lifecycle, depth, notifications, freeze controls, and virtual money.
-- First-visit welcome card with a link to the guide.
-- Persistent in-app notification bell for trading close, awaiting-result, and settlement events.
-- Tournament markets can be binary 1v1/2v2 or Pick a Winner with 3–20 outcomes.
-- Multi-outcome prices and positions are server-authoritative and settle to $1 for the winning outcome.
-- Settings expanded with extra background palette colors and custom six-digit hex background color.
-- Admin audit log is paginated and filterable by action, actor, and market ID.
-- Existing admin dashboard, Discord roles, emergency freeze, PostgreSQL ledger, and audit trail preserved.
-- Additive PostgreSQL migrations only; no database wipe required.
+## v1.6 changes
+- Added a central Home page with upcoming events, highlights/activity, navigation cards, and Discord community entry point.
+- Settings now open naturally on desktop hover and remain tap-friendly on mobile.
+- Added settlement notifications with payout and realized P/L details.
+- Added optional browser notifications while Ossper is open in a background tab.
+- Added fixed-odds binary markets. Fixed odds remain locked at the opening probability until trading closes.
+- Added Owner / Admin / Moderator / User role structure with backend-enforced moderator permissions.
+- Moderators can create/publish/cancel tournaments and perform routine market lifecycle actions, but cannot manage roles, freeze the system, fund accounts, or manage test infrastructure.
+- Test Control now supports a searchable linked-Discord tester directory.
+- Controlled tests can create sandbox tournament matches while a test is active.
+- Test-created markets/matches are tagged to the run, isolated from non-test users, and marked VOID/CANCELLED when the test ends while test trade/audit history is retained.
+- Fixed Test Control history loading/caching behavior.
+- Fixed Admin audit API/UI response mismatch and restored paginated/filterable audit history.
+- Added defensive JSON/error handling and debounced quote requests to prevent spinner/rapid-input rate-limit errors.
+- No database wipe. All database changes are additive migrations.
+
+## Existing architecture preserved
+- PostgreSQL balances, positions, trades, ledger, sessions, audit logs, system freeze, Discord OAuth, and controlled test snapshots.
+- Server-authoritative balances and settlement.
+- Virtual-money only.
 
 ## Required environment variables
 - DATABASE_URL
@@ -22,9 +32,3 @@ Community prediction market for tournament events. Virtual money only.
 - OSSPER_AUTH_SECRET
 
 Virtual-money demo only. Do not treat this as a real-money platform.
-
-
-## v1.5.1 hotfix
-- Fixed public tournament rendering error (`renderTournamentGroups is not defined`).
-- Added stable Active / Upcoming / Past tournament grouping.
-- Added market anchors for tournament navigation.
