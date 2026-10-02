@@ -387,6 +387,24 @@ async function endTestFromAccount(e){
   }catch(err){alert(err.message)}
 }
 
+let notificationData={notifications:[],unread:0};
+let seenNotificationIds=new Set();
+function toggleNotifications(){const p=document.getElementById('notificationPanel');p.style.display=p.style.display==='none'?'block':'none';if(p.style.display!=='none')loadNotifications()}
+async function loadNotifications(){
+  if(!prefs.notifications)return;
+  try{
+    const d=await api('/api/notifications');const list=Array.isArray(d.notifications)?d.notifications:[];const previous=seenNotificationIds;notificationData={notifications:list,unread:Number(d.unread||0)};seenNotificationIds=new Set(list.map(n=>Number(n.id)));
+    const b=document.getElementById('notificationBadge');b.textContent=d.unread||0;b.style.display=d.unread?'flex':'none';
+    const el=document.getElementById('notificationList');el.innerHTML=list.length?list.map(n=>`<div class="notificationItem ${n.read_at?'':'unread'}" onclick="readNotification(${n.id})"><b>${esc(n.title)}</b><p>${esc(n.message)}</p><time>${localDate(n.created_at,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</time></div>`).join(''):'<div class="empty">No notifications.</div>';
+    if(prefs.browserNotifications&&document.hidden&&"Notification" in window&&Notification.permission==="granted"){
+      list.filter(n=>!previous.has(Number(n.id))&&!n.read_at).slice(0,3).forEach(n=>{try{new Notification(n.title,{body:n.message,tag:`ossper-${n.id}`})}catch{}});
+    }
+  }catch{}
+}
+async function readNotification(id){try{await api('/api/notifications/'+id+'/read',{method:'POST',body:'{}'});loadNotifications()}catch{}}
+async function markAllNotificationsRead(){try{await api('/api/notifications/read-all',{method:'POST',body:'{}'});loadNotifications()}catch{}}
+function dismissWelcome(){localStorage.setItem('ossper_welcome_seen','1');document.getElementById('welcomeCard').style.display='none'}
+function maybeShowWelcome(){const el=document.getElementById('welcomeCard');if(el&&!localStorage.getItem('ossper_welcome_seen'))el.style.display='flex'}
 function dismissWelcome(){localStorage.setItem('ossper_welcome_seen','1');const el=document.getElementById('welcomeCard');if(el)el.style.display='none'}
 function maybeShowWelcome(){const el=document.getElementById('welcomeCard');if(el&&!localStorage.getItem('ossper_welcome_seen'))el.style.display='flex'}
 async function boot(){applyPrefs();if(!accountId){const s=await api("/api/session",{method:"POST",body:"{}"});accountId=s.accountId;localStorage.setItem(KEY,accountId)}await loadAuth();await refresh();maybeShowWelcome();loadNotifications();const initial=location.hash.replace("#","");if(["home","markets","tournaments","wagers","activity","portfolio","settings","help","about"].includes(initial))go(initial);else go("home")}
