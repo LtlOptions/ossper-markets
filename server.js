@@ -4,6 +4,7 @@ const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 const crypto = require("crypto");
 const path = require("path");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1381,7 +1382,17 @@ app.post("/api/admin/test/reset-all", adminOnly, async (req,res)=>{
 app.get("/api/admin/test/history", adminOnly, async (_req,res)=>{const q=await pool.query(`SELECT tr.*,COALESCE((SELECT COUNT(*) FROM trades t WHERE t.test_run_id=tr.id),0)::int AS trades,COALESCE((SELECT SUM(gross) FROM trades t WHERE t.test_run_id=tr.id),0) AS volume FROM test_runs tr ORDER BY started_at DESC LIMIT 25`);res.json(q.rows.map(r=>({...r,volume:Number(r.volume)})));});
 
 app.get("/admin-test", (_req, res) => res.sendFile(path.join(publicDir, "test-admin.html")));
-app.get("/admin", (_req, res) => res.sendFile(path.join(publicDir, "admin.html")));
+app.get("/admin", (_req, res) => {
+  const adminPath = path.join(publicDir, "admin.html");
+  try {
+    let html = fs.readFileSync(adminPath, "utf8");
+    const testButton = `<a href="/admin-test" style="position:fixed;top:18px;right:18px;z-index:9999;text-decoration:none;border:1px solid #527bb1;background:#152943;color:#eaf2ff;border-radius:9px;padding:10px 14px;font:700 13px Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.25)">🧪 Test Control</a>`;
+    if (!html.includes('href="/admin-test"')) html = html.replace("<body>", `<body>${testButton}`);
+    res.type("html").send(html);
+  } catch (e) {
+    res.sendFile(adminPath);
+  }
+});
 app.use((_req, res) => res.sendFile(path.join(publicDir, "index.html")));
 
 initDb()
