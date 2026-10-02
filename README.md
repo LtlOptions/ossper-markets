@@ -1,4 +1,4 @@
-# Ossper Markets v1.7.0 — Sandbox + Community UX
+# Ossper Markets v1.7.1 — Sandbox + Community UX
 
 Community prediction market for tournament events. Virtual money only.
 
@@ -46,3 +46,14 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Admin live matches are grouped by tournament to reduce clutter.
 - User-facing “Resolve” wording changed to “Record winner” where applicable.
 - Existing database state is preserved; no DROP/TRUNCATE operations are used.
+
+
+## v1.7.1 — Role middleware, mode menu, and settings polish
+- Fixed elevated admin/moderator routes so Discord-authenticated Owner/Admin/Moderator sessions are actually loaded before permission checks.
+- Fixed Discord OAuth callback handling when mobile drops the temporary OAuth state cookie.
+- Interface theme, accent color, and surface style are now compact dropdown selectors instead of large button walls.
+- Settings hover menu now closes when the pointer leaves the menu area while remaining tap-friendly on mobile.
+- Account dropdown now shows the current access mode with icons and direct User / Mod-Test / Admin switching when permitted.
+- Admin and Test Control inherit the saved interface theme, accent, glass/solid surface choice, and custom background.
+- Test Control now shows the authenticated Ossper role/source so permission problems are immediately visible.
+- No database wipe, DROP, or TRUNCATE operations added.

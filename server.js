@@ -105,15 +105,19 @@ async function ownerOnly(req, res, next) {
 }
 
 async function adminOrModerator(req, res, next) {
-  if (req.admin?.source === "admin_key") return next();
-  if (["owner","admin","moderator"].includes(req.admin?.role)) return next();
-  return res.status(403).json({ error: "Admin or moderator access required." });
+  return adminOnly(req, res, () => {
+    if (req.admin?.source === "admin_key") return next();
+    if (["owner","admin","moderator"].includes(req.admin?.role)) return next();
+    return res.status(403).json({ error: "Admin or moderator access required." });
+  });
 }
 
 async function adminOrOwner(req, res, next) {
-  if (req.admin?.source === "admin_key") return next();
-  if (["owner","admin"].includes(req.admin?.role)) return next();
-  return res.status(403).json({ error: "Admin access required." });
+  return adminOnly(req, res, () => {
+    if (req.admin?.source === "admin_key") return next();
+    if (["owner","admin"].includes(req.admin?.role)) return next();
+    return res.status(403).json({ error: "Admin access required." });
+  });
 }
 
 function setAdminCookie(res, token) {
@@ -872,7 +876,7 @@ app.get("/auth/discord/callback", async (req, res) => {
       const linked = await client.query("SELECT id FROM accounts WHERE discord_id=$1 FOR UPDATE", [discordId]);
       if (linked.rows.length) {
         accountId = linked.rows[0].id;
-      } else if (cookieState.accountId) {
+      } else if (cookieState?.accountId) {
         const guest = await client.query("SELECT id, auth_provider, discord_id FROM accounts WHERE id=$1 FOR UPDATE", [cookieState.accountId]);
         if (guest.rows.length && !guest.rows[0].discord_id) {
           accountId = guest.rows[0].id;
