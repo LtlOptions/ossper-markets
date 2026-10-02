@@ -369,6 +369,11 @@ async function initDb() {
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS test_run_id UUID REFERENCES test_runs(id) ON DELETE SET NULL`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS market_type TEXT NOT NULL DEFAULT 'DYNAMIC'`);
   await pool.query(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS fixed_yes_price NUMERIC(10,4)`);
+  // Normalize legacy/partial-deployment values before enforcing the new CHECK constraint.
+  await pool.query(`UPDATE markets SET market_type = CASE
+    WHEN UPPER(TRIM(COALESCE(market_type, ''))) IN ('FIXED','FIXED_ODDS','FIXED ODDS') THEN 'FIXED'
+    ELSE 'DYNAMIC'
+  END WHERE market_type IS NULL OR UPPER(TRIM(market_type)) NOT IN ('DYNAMIC','FIXED')`);
   await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_market_type_check`);
   await pool.query(`ALTER TABLE markets ADD CONSTRAINT markets_market_type_check CHECK (market_type IN ('DYNAMIC','FIXED'))`);
   await pool.query(`ALTER TABLE markets DROP CONSTRAINT IF EXISTS markets_fixed_yes_price_check`);
