@@ -95,3 +95,17 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 
 ## v1.7.8
 - Fixed market-chart hover/touch crosshair alignment by mapping pointer coordinates to the SVG plot area rather than the full SVG including the Y-axis label gutter.
+
+
+## v1.8.0 — Test Season Phase 1
+
+Adds the additive foundation for Ossper Test Season / Tournament Mode:
+- `seasons` lifecycle: DRAFT → REGISTRATION → LIVE → PAUSED → COMPLETED → ARCHIVED
+- configurable starting balance, locked once registration opens
+- season player/wallet/match/market/result/stat tables prepared for later phases
+- nullable `season_id` context on matches, markets, trades, ledger entries, wagers, and audit logs
+- admin/host season creation, configuration, lifecycle controls, and audit events
+- no real-money functionality and no changes to normal account balances
+- no destructive database operations
+
+Phase 1 intentionally does not activate season trading or move balances. That begins only after the isolated season wallet and player-enrollment layer is implemented and tested.

@@ -66,6 +66,7 @@ body.solidSurface select { background:var(--panel2) !important; }
 
   <div class="tabs">
     <button class="tab active" onclick="jump('overview',this)">Overview</button>
+    <button class="tab" onclick="jump('seasonsSection',this);loadSeasons()">Test Seasons</button>
     <button class="tab" onclick="jump('matchesSection',this)">Matches</button>
     <button class="tab" onclick="jump('controls',this)">System</button>
     <button class="tab" onclick="jump('rolesSection',this)">Admins</button>
@@ -84,6 +85,19 @@ body.solidSurface select { background:var(--panel2) !important; }
       <div class="marketHead"><div><h2>Command summary</h2><div class="muted">Live operational snapshot. Refreshes automatically.</div></div><div id="lastRefresh" class="muted">—</div></div>
       <div id="summary" class="metrics"></div>
     </div>
+  </section>
+
+  <section id="seasonsSection" class="section box">
+    <div class="marketHead"><div><h2>Test Season / Tournament Mode</h2><div class="muted">Simulation-only competition layer. No real money, deposits, withdrawals, or prize payments.</div></div><span class="pill">SIMULATION · NO REAL MONEY</span></div>
+    <div class="notice">Phase 1 establishes the season lifecycle and isolated data model. Season trading and points wallets are intentionally not activated yet.</div>
+    <div class="row">
+      <div><div class="label">Season name</div><input id="seasonName" value="Ossper Test Season #1" maxlength="120"></div>
+      <div><div class="label">Starting balance</div><input id="seasonStartingBalance" type="number" min="0" max="1000000000" step="100" value="10000"><div class="hint">Points per player. Locked once registration opens.</div></div>
+    </div>
+    <div><div class="label">Description</div><input id="seasonDescription" maxlength="1000" placeholder="STRAFTAT tournament prediction competition"></div>
+    <div class="actions" style="margin-top:10px"><button class="primary" onclick="createSeason()">Create Test Season</button><button onclick="loadSeasons()">Refresh seasons</button></div>
+    <div id="seasonMsg" style="margin-top:9px"></div>
+    <div id="seasonsList" style="margin-top:14px"><div class="muted">Loading…</div></div>
   </section>
 
   <section id="controls" class="section box">
@@ -193,10 +207,36 @@ function renderMatchGroups(matches){const groups=new Map();for(const m of matche
 async function loadAudit(){try{const params=new URLSearchParams({page:String(auditPage),pageSize:'40'});const action=document.getElementById('auditAction').value,actor=document.getElementById('auditActor').value.trim(),marketId=document.getElementById('auditMarket').value;if(action)params.set('action',action);if(actor)params.set('actor',actor);if(marketId)params.set('marketId',marketId);const d=await api('/api/admin/audit?'+params.toString());auditPages=d.pages;audit.innerHTML=d.rows.map(x=>`<div class="audit"><b>${esc(x.action)}</b> · ${esc(x.actor)} · market ${esc(x.market_id||'-')}<div class="meta">${esc(date(x.created_at))} · ${esc(JSON.stringify(x.details))}</div></div>`).join('')||'No audit events match these filters.';document.getElementById('auditPageInfo').textContent=`Page ${d.page} of ${d.pages} · ${d.total} events`;document.getElementById('auditPrev').disabled=d.page<=1;document.getElementById('auditNext').disabled=d.page>=d.pages}catch(e){audit.innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
 function applyAuditFilters(){auditPage=1;loadAudit()}function clearAuditFilters(){auditAction.value='';auditActor.value='';auditMarket.value='';auditPage=1;loadAudit()}function changeAuditPage(delta){auditPage=Math.max(1,Math.min(auditPages,auditPage+delta));loadAudit()}
 
+function seasonStatusClass(s){return s==='LIVE'?'green':s==='PAUSED'?'yellow':s==='COMPLETED'?'blue':s==='ARCHIVED'?'':'red'}
+function seasonActions(s){
+  const out=[];
+  if(s.status==='DRAFT') out.push(`<button class="primary" onclick="seasonStatus('${s.id}','REGISTRATION')">Open registration</button>`);
+  if(s.status==='REGISTRATION') out.push(`<button class="good" onclick="seasonStatus('${s.id}','LIVE')">Start season</button>`);
+  if(s.status==='LIVE') out.push(`<button onclick="seasonStatus('${s.id}','PAUSED')">Pause</button><button class="danger" onclick="seasonStatus('${s.id}','COMPLETED')">End season</button>`);
+  if(s.status==='PAUSED') out.push(`<button class="good" onclick="seasonStatus('${s.id}','LIVE')">Resume</button><button class="danger" onclick="seasonStatus('${s.id}','COMPLETED')">End season</button>`);
+  if(s.status==='COMPLETED') out.push(`<button onclick="seasonStatus('${s.id}','ARCHIVED')">Archive</button>`);
+  return out.join('');
+}
+function renderSeasons(rows){
+  if(!rows.length){seasonsList.innerHTML='<div class="muted">No Test Seasons created yet.</div>';return;}
+  seasonsList.innerHTML=rows.map(s=>`<article class="market" style="margin-bottom:10px"><div class="marketHead"><div><h3>OSSPER TEST SEASON #${esc(s.season_number)} · ${esc(s.name)}</h3><div class="muted">${esc(s.description||'No description')} · Starting balance ${Number(s.starting_balance).toLocaleString()} OSSPER POINTS</div></div><span class="pill ${seasonStatusClass(s.status)}">${esc(s.status)}</span></div><div class="metrics"><div class="metric"><b>${Number(s.player_count||0)}</b><span>Players</span></div><div class="metric"><b>${Number(s.match_count||0)}</b><span>Matches</span></div><div class="metric"><b>${Number(s.market_count||0)}</b><span>Markets</span></div><div class="metric"><b>${esc(date(s.created_at))}</b><span>Created</span></div></div><div class="actions">${seasonActions(s)}</div></article>`).join('');
+}
+async function loadSeasons(){try{const d=await api('/api/admin/seasons');renderSeasons(Array.isArray(d)?d:[])}catch(e){seasonsList.innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
+async function createSeason(){
+  const name=String(seasonName.value||'').trim(), description=String(seasonDescription.value||'').trim(), startingBalance=Number(seasonStartingBalance.value);
+  if(!name){seasonMsg.innerHTML='<span class="error">Season name is required.</span>';return}
+  try{await api('/api/admin/seasons',{method:'POST',body:JSON.stringify({name,description,startingBalance})});seasonMsg.innerHTML='<span class="success">Test Season created ✓</span>';seasonName.value='Ossper Test Season #'+(Date.now()%1000);seasonDescription.value='';await loadSeasons()}catch(e){seasonMsg.innerHTML='<span class="error">'+esc(e.message)+'</span>'}
+}
+async function seasonStatus(id,status){
+  const labels={REGISTRATION:'open registration',LIVE:'start this season',PAUSED:'pause this season',COMPLETED:'end this season',ARCHIVED:'archive this season'};
+  if(!confirm(`Are you sure you want to ${labels[status]||status}?`))return;
+  try{await api('/api/admin/seasons/'+encodeURIComponent(id)+'/status',{method:'POST',body:JSON.stringify({status})});await loadSeasons()}catch(e){alert(e.message)}
+}
+
 async function loadAll(){try{const [sys,ms,matches]=await Promise.all([api("/api/admin/system"),api("/api/admin/markets"),api("/api/admin/matches")]);await loadSystem();updateStats(ms,matches);matchesEl.innerHTML=renderMatchGroups(matches)||'<div class="muted">No tournament matches yet.</div>';legacyMarkets.innerHTML=ms.filter(m=>!m.match_id).map(legacyCard).join("")||"No standalone markets.";lastRefresh.textContent="Updated "+new Date().toLocaleTimeString();loadRoles();loadAudit()}catch(e){document.getElementById("panel").innerHTML='<div class="error">'+esc(e.message)+'</div>'}}
 let auditPage=1,auditPages=1;const matchesEl=document.getElementById("matches"), legacyMarkets=document.getElementById("legacyMarkets"), audit=document.getElementById("audit"), lastRefresh=document.getElementById("lastRefresh"), summary=document.getElementById("summary");
 const statMarkets=document.getElementById("statMarkets"),statTrading=document.getElementById("statTrading"),statMatches=document.getElementById("statMatches"),statVolume=document.getElementById("statVolume"),statMatchesSub=document.getElementById("statMatchesSub");
-adminUserSearch.addEventListener("input",searchRoleUsers);initAdmin();setInterval(()=>{if(document.getElementById("panel").style.display!=="none")loadAll()},10000);
+adminUserSearch.addEventListener("input",searchRoleUsers);initAdmin();loadSeasons();setInterval(()=>{if(document.getElementById("panel").style.display!=="none")loadAll()},10000);
 </script>
 </body>
 </html>
