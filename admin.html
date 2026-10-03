@@ -207,6 +207,31 @@ function renderMatchGroups(matches){const groups=new Map();for(const m of matche
 async function loadAudit(){try{const params=new URLSearchParams({page:String(auditPage),pageSize:'40'});const action=document.getElementById('auditAction').value,actor=document.getElementById('auditActor').value.trim(),marketId=document.getElementById('auditMarket').value;if(action)params.set('action',action);if(actor)params.set('actor',actor);if(marketId)params.set('marketId',marketId);const d=await api('/api/admin/audit?'+params.toString());auditPages=d.pages;audit.innerHTML=d.rows.map(x=>`<div class="audit"><b>${esc(x.action)}</b> · ${esc(x.actor)} · market ${esc(x.market_id||'-')}<div class="meta">${esc(date(x.created_at))} · ${esc(JSON.stringify(x.details))}</div></div>`).join('')||'No audit events match these filters.';document.getElementById('auditPageInfo').textContent=`Page ${d.page} of ${d.pages} · ${d.total} events`;document.getElementById('auditPrev').disabled=d.page<=1;document.getElementById('auditNext').disabled=d.page>=d.pages}catch(e){audit.innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
 function applyAuditFilters(){auditPage=1;loadAudit()}function clearAuditFilters(){auditAction.value='';auditActor.value='';auditMarket.value='';auditPage=1;loadAudit()}function changeAuditPage(delta){auditPage=Math.max(1,Math.min(auditPages,auditPage+delta));loadAudit()}
 
+async function createSeason(){
+  const nameEl=document.getElementById('seasonName');
+  const balanceEl=document.getElementById('seasonStartingBalance');
+  const descEl=document.getElementById('seasonDescription');
+  const msg=document.getElementById('seasonMsg');
+  const button=document.querySelector('button[onclick="createSeason()"]');
+  const name=String(nameEl?.value||'').trim();
+  const description=String(descEl?.value||'').trim();
+  const startingBalance=Number(balanceEl?.value);
+  if(!name){msg.innerHTML='<span class="error">Season name is required.</span>';nameEl?.focus();return;}
+  if(!Number.isFinite(startingBalance)||startingBalance<0){msg.innerHTML='<span class="error">Starting balance must be a valid non-negative number.</span>';balanceEl?.focus();return;}
+  if(button)button.disabled=true;
+  msg.innerHTML='<span class="muted">Creating Test Season…</span>';
+  try{
+    const d=await api('/api/admin/seasons',{method:'POST',body:JSON.stringify({name,description,startingBalance})});
+    msg.innerHTML='<span class="success">Test Season created ✓</span>';
+    if(nameEl)nameEl.dataset.edited='';
+    await loadSeasons();
+    if(d?.season?.season_number && nameEl) nameEl.value='Ossper Test Season #'+(Number(d.season.season_number)+1);
+  }catch(e){
+    msg.innerHTML='<span class="error">'+esc(e.message||'Unable to create Test Season.')+'</span>';
+  }finally{
+    if(button)button.disabled=false;
+  }
+}
 function seasonStatusClass(s){return s==='LIVE'?'green':s==='PAUSED'?'yellow':s==='COMPLETED'?'blue':s==='ARCHIVED'?'':'red'}
 function seasonActions(s){
   const out=[`<button onclick="manageSeasonPlayers('${s.id}')">Manage players</button>`];
