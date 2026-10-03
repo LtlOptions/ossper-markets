@@ -1,3 +1,12 @@
+# Ossper Markets v2.1.3
+
+Mobile dropdown alignment hotfix.
+
+- Notification panel is centered against the mobile viewport.
+- Mobile navigation menu is centered and constrained to the viewport.
+- Account/mode menu is centered and constrained on mobile.
+- Desktop behavior is unchanged.
+- No database migrations or destructive operations.
 # Ossper Markets v1.8.0 — Weekend Test Layer
 
 Community prediction market for tournament events. Virtual money only.

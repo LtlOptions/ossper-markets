@@ -391,52 +391,6 @@ async function initDb() {
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS participant_b_ids UUID[] NOT NULL DEFAULT '{}';
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
-
-    /* Recover season-match schedules written into started_at by the early Phase 3 build.
-       Prefer the original creation audit payload so the intended scheduled time is restored. */
-    UPDATE season_matches sm
-    SET scheduled_at = (
-      (SELECT al.details->>'scheduledAt'
-       FROM audit_logs al
-       WHERE al.action='TEST_SEASON_MATCH_CREATED'
-         AND (al.details->>'matchId')=sm.id::text
-         AND NULLIF(al.details->>'scheduledAt','') IS NOT NULL
-         AND (al.details->>'scheduledAt') ~ '^\\d{4}-\\d{2}-\\d{2}T'
-       ORDER BY al.created_at ASC
-       LIMIT 1)
-    )::timestamptz
-    WHERE sm.scheduled_at IS NULL
-      AND EXISTS (
-        SELECT 1
-        FROM audit_logs al
-        WHERE al.action='TEST_SEASON_MATCH_CREATED'
-          AND (al.details->>'matchId')=sm.id::text
-          AND NULLIF(al.details->>'scheduledAt','') IS NOT NULL
-          AND (al.details->>'scheduledAt') ~ '^\\d{4}-\\d{2}-\\d{2}T'
-      );
-
-    /* Recover legacy main-tournament schedules from their creation audit when present. */
-    UPDATE matches mt
-    SET scheduled_at = (
-      (SELECT al.details->>'scheduledAt'
-       FROM audit_logs al
-       WHERE al.action='CREATE_MATCH_MARKET'
-         AND (al.details->>'matchId')=mt.id::text
-         AND NULLIF(al.details->>'scheduledAt','') IS NOT NULL
-         AND (al.details->>'scheduledAt') ~ '^\\d{4}-\\d{2}-\\d{2}T'
-       ORDER BY al.created_at ASC
-       LIMIT 1)
-    )::timestamptz
-    WHERE mt.scheduled_at IS NULL
-      AND EXISTS (
-        SELECT 1
-        FROM audit_logs al
-        WHERE al.action='CREATE_MATCH_MARKET'
-          AND (al.details->>'matchId')=mt.id::text
-          AND NULLIF(al.details->>'scheduledAt','') IS NOT NULL
-          AND (al.details->>'scheduledAt') ~ '^\\d{4}-\\d{2}-\\d{2}T'
-      );
-
     DO $$ BEGIN
       ALTER TABLE season_matches ADD CONSTRAINT season_matches_format_check CHECK (format IN ('1v1','2v2'));
     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -1888,7 +1842,7 @@ app.post("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,re
     const sideA=aLabel||defaultA, sideB=bLabel||defaultB;
     const title=`Match #${String(matchNumber).padStart(3,'0')} · ${sideA} vs ${sideB}`;
     const id=crypto.randomUUID();
-    const ins=await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,scheduled_at,format,participant_a_ids,participant_b_ids,description) VALUES ($1,$2,$3,$4,$5,$6,'SCHEDULED',$7,$8,$9::uuid[],$10::uuid[],$11) RETURNING *`,[id,seasonId,matchNumber,title,sideA,sideB,scheduledAt||null,format,aIds,bIds,description]);
+    const ins=await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,started_at,format,participant_a_ids,participant_b_ids,description) VALUES ($1,$2,$3,$4,$5,$6,'SCHEDULED',$7,$8,$9::uuid[],$10::uuid[],$11) RETURNING *`,[id,seasonId,matchNumber,title,sideA,sideB,scheduledAt||null,format,aIds,bIds,description]);
     const actor=req.admin?.accountId||req.admin?.discordId||'admin';
     await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_MATCH_CREATED',$2,$3)`,[actor,JSON.stringify({matchId:id,matchNumber,format,participantAIds:aIds,participantBIds:bIds,sideA,sideB,scheduledAt}),seasonId]);
     await client.query('COMMIT');

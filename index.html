@@ -154,6 +154,44 @@ body.solidSurfaces .modal{
 @media(max-width:850px){.activityToolbar{grid-template-columns:1fr 1fr}.activityToolbar .wide{grid-column:1/-1}.notificationPanel{left:50%;right:auto;transform:translate(-50%,4px)}.notificationDropdown:hover .notificationPanel{opacity:0;visibility:hidden;pointer-events:none;transform:translate(-50%,4px)}.notificationDropdown.open .notificationPanel{opacity:1;visibility:visible;pointer-events:auto;transform:translate(-50%,0)}}
 @media(max-width:600px){.activityToolbar{grid-template-columns:1fr}.activityToolbar .wide{grid-column:auto}.activityPager{align-items:stretch;flex-direction:column}.notificationPanel{width:min(360px,calc(100vw - 20px));max-width:calc(100vw - 20px)}}
 
+
+/* v2.1.3 mobile dropdown alignment hotfix */
+@media (max-width: 850px){
+  .notificationPanel{
+    position:fixed !important;
+    left:50% !important;
+    right:auto !important;
+    top:72px !important;
+    width:min(360px,calc(100vw - 24px)) !important;
+    max-width:calc(100vw - 24px) !important;
+    transform:translate(-50%,4px) !important;
+  }
+  .notificationDropdown.open .notificationPanel{
+    transform:translate(-50%,0) !important;
+  }
+  .notificationDropdown:hover .notificationPanel{
+    transform:translate(-50%,4px) !important;
+  }
+  .mobileNavMenu{
+    position:fixed !important;
+    left:50% !important;
+    right:auto !important;
+    top:72px !important;
+    width:min(260px,calc(100vw - 24px)) !important;
+    max-width:calc(100vw - 24px) !important;
+    transform:translateX(-50%) !important;
+  }
+  .accountMenu{
+    position:fixed !important;
+    left:50% !important;
+    right:auto !important;
+    top:72px !important;
+    width:min(300px,calc(100vw - 24px)) !important;
+    min-width:0 !important;
+    max-width:calc(100vw - 24px) !important;
+    transform:translateX(-50%) !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -213,7 +251,7 @@ body.solidSurfaces .modal{
       <details class="settingsGroup"><summary>Dashboard <span>Layout & display</span></summary><div class="settingsGroupBody">
         <div class="settingsCard"><h3>Market layout</h3><p>Choose whether market cards sit side-by-side or stack vertically.</p><div class="optionRow"><button class="option" data-layout-choice="two" onclick="setMarketLayout('two')">Two columns</button><button class="option" data-layout-choice="single" onclick="setMarketLayout('single')">Single column</button><button class="option" id="compactToggle" onclick="toggleCompact()">Compact cards</button></div></div>
         <div class="settingsCard"><h3>Dashboard order</h3><p>Move the sections on your Markets dashboard up or down. Your order is saved automatically.</p><div id="layoutList" class="layoutList"></div><div class="saveNote">This changes the dashboard layout only; the main navigation stays fixed.</div></div>
-        <div class="settingsCard"><h3>Display preferences</h3><p>Small quality-of-life settings for the trading interface.</p><div class="optionRow"><button class="option" data-time-choice="12" onclick="setTimeFormat('12')">12-hour time</button><button class="option" data-time-choice="24" onclick="setTimeFormat('24')">24-hour time</button></div><div class="row" style="margin-top:8px"><div><div class="label">Time zone</div><select id="timeZoneChoice" onchange="setTimeZone(this.value)"><option value="auto">Use device time zone</option><option value="America/New_York">Eastern Time</option><option value="America/Chicago">Central Time</option><option value="America/Denver">Mountain Time</option><option value="America/Los_Angeles">Pacific Time</option><option value="America/Anchorage">Alaska Time</option><option value="Pacific/Honolulu">Hawaii Time</option><option value="UTC">UTC</option></select></div></div><div class="saveNote" id="timeZoneNote">Dates and times automatically use your device&apos;s local timezone unless you choose an override.</div></div>
+        <div class="settingsCard"><h3>Display preferences</h3><p>Small quality-of-life settings for the trading interface.</p><div class="optionRow"><button class="option" data-time-choice="12" onclick="setTimeFormat('12')">12-hour time</button><button class="option" data-time-choice="24" onclick="setTimeFormat('24')">24-hour time</button></div><div class="saveNote">Times use your device's local timezone.</div></div>
       </div></details>
       <details class="settingsGroup"><summary>Trading <span>Live updates & confirmations</span></summary><div class="settingsGroupBody">
         <div class="settingsCard"><h3>Live market updates</h3><p>Keep prices, volume, positions, and balances synchronized automatically while this page is open.</p><div class="optionRow"><button class="option" data-live-choice="on" onclick="setLiveUpdates(true)">Live updates on</button><button class="option" data-live-choice="off" onclick="setLiveUpdates(false)">Manual refresh</button></div><div class="saveNote" id="liveStatusNote">Updates every 3 seconds while this tab is active.</div></div>
@@ -230,7 +268,7 @@ body.solidSurfaces .modal{
 <div id="modalBack" class="modalBack"><div class="modal"><h3 id="modalTitle">Buy YES</h3><p id="modalSub">Enter a contract quantity.</p><input id="qty" type="number" min="1" max="10000" step="1" value="10"><div id="quote" class="quote">Enter a quantity to preview the trade.</div><div class="modalActions"><button onclick="closeModal()">Cancel</button><button class="primary" id="confirmBtn" onclick="confirmTrade()">Confirm</button></div></div></div><div id="wagerHubBack" class="modalBack"><div class="modal wagerHubModal"><div class="modalHead"><div><h3>Create a wager</h3><p>Choose how you want to put virtual money to work.</p></div><button class="modalClose" onclick="closeWagerHub()">Close</button></div><div class="wagerChoiceGrid"><button class="wagerChoice" onclick="openWagerFromHub()"><span class="wagerChoiceIcon">⚔</span><span><b>Challenge a player</b><small>Pick an opponent, a market, a side, and a stake.</small></span><span>→</span></button><button class="wagerChoice" onclick="openMarketTradeFromHub()"><span class="wagerChoiceIcon">◈</span><span><b>Wager on a market</b><small>Choose an existing market and trade YES or NO.</small></span><span>→</span></button></div></div></div><div id="marketWagerChoiceBack" class="modalBack"><div class="modal wagerHubModal"><div class="modalHead"><div><h3>Wager on a market</h3><p>Pick a live market and choose YES or NO.</p></div><button class="modalClose" onclick="closeMarketWagerChoices()">Close</button></div><div id="marketWagerChoiceList" class="wagerChoiceGrid"></div></div></div><div id="wagerModalBack" class="modalBack"><div class="modal"><div class="modalHead"><div><h3 id="wagerModalTitle">Create wager</h3><p id="wagerModalSub">Challenge another tester.</p></div><button class="modalClose" onclick="closeWagerModal()">Close</button></div><div class="wagerFormGrid"><div class="full"><label>Market</label><select id="wagerMarketSelect"></select></div><div class="full"><label>Opponent</label><div class="wagerSearch"><input id="wagerOpponentSearch" autocomplete="off" placeholder="Search Discord name…"><div id="wagerOpponentResults" class="wagerSearchResults"></div></div><div id="selectedOpponent" class="selectedOpponent" style="display:none"></div></div><div><label>Your side</label><select id="wagerSide"><option value="YES">YES</option><option value="NO">NO</option></select></div><div><label>Stake</label><input id="wagerAmount" type="number" min="1" max="100000" step="1" value="25"></div></div><div id="wagerHint" class="wagerHint"></div><div class="modalActions" style="margin-top:14px"><button onclick="closeWagerModal()">Cancel</button><button class="primary" onclick="submitWager()">Send wager</button></div></div></div><div id="chartModalBack" class="modalBack"><div class="modal" style="width:min(720px,100%)"><div class="modalHead"><div><h3 id="chartTitle">Market chart</h3><p id="chartSub">YES probability over time.</p></div><button class="modalClose" onclick="closeChartModal()">Close</button></div><div id="chartBody" class="chartWrap"><div class="chartEmpty">Loading chart…</div></div></div></div>
 <script>
 const KEY="ossper_account_id", PREF="ossper_preferences_v12";let accountId=localStorage.getItem(KEY);let state=[];let wagers=[];let pending=null;let wagerDraft={marketId:null,side:"YES",opponentId:null,opponentName:""};let systemFrozen=false;let me={authenticated:false,account:null};let discordEnabled=false;
-const defaults={theme:"midnight",accent:"blue",surface:"glass",marketLayout:"two",compact:false,liveUpdates:true,confirmTrades:true,reducedMotion:false,timeFormat:"12",timeZone:"auto",order:["portfolio","markets","tournaments","activity"],background:"",notifications:true,browserNotifications:false};
+const defaults={theme:"midnight",accent:"blue",surface:"glass",marketLayout:"two",compact:false,liveUpdates:true,confirmTrades:true,reducedMotion:false,timeFormat:"12",order:["portfolio","markets","tournaments","activity"],background:"",notifications:true,browserNotifications:false};
 let prefs={...defaults,...JSON.parse(localStorage.getItem(PREF)||"{}")};prefs.order=Array.isArray(prefs.order)&&prefs.order.length===4?prefs.order:defaults.order;
 function savePrefs(){localStorage.setItem(PREF,JSON.stringify(prefs));applyPrefs()}
 function applyPrefs(){
@@ -247,9 +285,9 @@ function applyPrefs(){
   const nt=document.getElementById("notifyToggle");if(nt)nt.classList.toggle("active",prefs.notifications);const bnt=document.getElementById("browserNotifyToggle");if(bnt)bnt.classList.toggle("active",prefs.browserNotifications);const bns=document.getElementById("browserNotifyStatus");if(bns)bns.textContent=prefs.browserNotifications?(("Notification" in window&&Notification.permission==="granted")?"Browser alerts enabled.":"Permission not granted yet."):"Off";
   const cb=document.getElementById("customBackground");if(cb)cb.value=prefs.background||"";updateSettingPreviews();
   document.querySelectorAll("[data-live-choice]").forEach(b=>b.classList.toggle("active",(b.dataset.liveChoice==="on")===prefs.liveUpdates));const confirm=document.getElementById("confirmToggle");if(confirm)confirm.classList.toggle("active",prefs.confirmTrades);const reduced=document.getElementById("reducedMotionToggle");if(reduced)reduced.classList.toggle("active",prefs.reducedMotion);document.body.classList.toggle("reducedMotion",prefs.reducedMotion);
-  document.querySelectorAll("[data-time-choice]").forEach(b=>b.classList.toggle("active",b.dataset.timeChoice===prefs.timeFormat));const tz=document.getElementById("timeZoneChoice");if(tz){tz.value=prefs.timeZone||"auto";const actual=Intl.DateTimeFormat().resolvedOptions().timeZone||"UTC";const note=document.getElementById("timeZoneNote");if(note)note.textContent=(prefs.timeZone&&prefs.timeZone!=="auto")?`Dates/times display in ${prefs.timeZone}.`:`Dates/times use this device's local timezone (${actual}).`;}const li=document.getElementById("liveIndicator");if(li){li.classList.toggle("off",!prefs.liveUpdates);li.title=prefs.liveUpdates?"Live updates every 3 seconds":"Automatic updates are off"}const note=document.getElementById("liveStatusNote");if(note)note.textContent=prefs.liveUpdates?"Updates every 3 seconds while this tab is active.":"Automatic updates are off. Refresh manually to sync.";renderLayoutList();applyOrder();
+  document.querySelectorAll("[data-time-choice]").forEach(b=>b.classList.toggle("active",b.dataset.timeChoice===prefs.timeFormat));const li=document.getElementById("liveIndicator");if(li){li.classList.toggle("off",!prefs.liveUpdates);li.title=prefs.liveUpdates?"Live updates every 3 seconds":"Automatic updates are off"}const note=document.getElementById("liveStatusNote");if(note)note.textContent=prefs.liveUpdates?"Updates every 3 seconds while this tab is active.":"Automatic updates are off. Refresh manually to sync.";renderLayoutList();applyOrder();
 }
-function setTimeZone(v){prefs.timeZone=(v&&v!=="auto")?v:"auto";savePrefs();render()}function effectiveTimeZone(){const z=prefs.timeZone;return z&&z!=="auto"?z:null}function updateSettingPreviews(){
+function updateSettingPreviews(){
   const themes={midnight:["#102440","#07101b"],black:["#0b1017","#04070b"],slate:["#202833","#11161d"],graphite:["#24272e","#111216"],aurora:["#1a5a50","#0b2420"],ocean:["#0e536c","#092532"],forest:["#1b4e2d","#0c1c13"],rose:["#6a2546","#211019"],ember:["#713719","#21130c"],plum:["#572b7c","#1b1025"]};
   const accents={blue:["#4f91ff","#7db0ff"],violet:["#9a72ff","#b59aff"],cyan:["#21c9e9","#7be4f5"],gold:["#e3b341","#f0cf73"],emerald:["#2dd4a3","#79f0cb"],orange:["#ff9d3d","#ffc078"],pink:["#ff6fae","#ff9bc7"],magenta:["#e65cff","#f29aff"],ice:["#8fdcff","#c6efff"],rose:["#ff6b83","#ff9eae"]};
   const t=themes[prefs.theme]||themes.midnight, a=accents[prefs.accent]||accents.blue;
@@ -279,7 +317,7 @@ function closeMobileNav(){const m=document.getElementById("mobileNavMenu");if(m)
 document.addEventListener("click",e=>{if(!e.target.closest(".mobileNavWrap"))closeMobileNav();if(!e.target.closest("#notificationDropdown"))closeNotifications();if(!e.target.closest("#accountArea")){const m=document.getElementById("accountMenu");if(m)m.style.display="none"}});
 function go(view){closeMobileNav();closeNotifications();const accountMenu=document.getElementById("accountMenu");if(accountMenu)accountMenu.style.display="none";document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.dataset.view===view));document.querySelectorAll("[data-nav]").forEach(b=>b.classList.toggle("active",b.dataset.nav===view));document.querySelectorAll("[data-mobile-nav]").forEach(b=>b.classList.toggle("active",b.dataset.mobileNav===view));if(location.hash!=="#"+view)history.replaceState(null,"","#"+view);window.scrollTo({top:0,behavior:"smooth"});if(view==="portfolio"){renderPortfolio();loadPortfolioChart()}if(view==="activity")renderActivityFull();if(view==="tournaments")renderTournamentsFull();if(view==="wagers")renderWagers();if(view==="home")renderHome();if(view==="settings"){renderLayoutList();renderAccount()}if(view==="season")loadSeasonMe();if(view==="help")loadNotifications()}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
-function money(v){return "$"+Number(v||0).toFixed(2)}function prob(v){return "$"+Number(v||0).toFixed(3)}function localDate(v,opts={}){const o={...opts,hour12:prefs.timeFormat!=="24"};const z=effectiveTimeZone();if(z)o.timeZone=z;return new Date(v).toLocaleString([],o)}function localTime(v,opts={}){const o={...opts,hour12:prefs.timeFormat!=="24"};const z=effectiveTimeZone();if(z)o.timeZone=z;return new Date(v).toLocaleTimeString([],o)}
+function money(v){return "$"+Number(v||0).toFixed(2)}function prob(v){return "$"+Number(v||0).toFixed(3)}function localDate(v,opts={}){return new Date(v).toLocaleString([], {...opts,hour12:prefs.timeFormat!=="24"})}function localTime(v,opts={}){return new Date(v).toLocaleTimeString([], {...opts,hour12:prefs.timeFormat!=="24"})}
 function seasonDateMeta(s){const parts=[];if(s?.status==='LIVE'&&s?.startedAt)parts.push('<span><b>Live since</b> '+esc(localDate(s.startedAt,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}))+'</span>');else if(s?.registrationOpenAt)parts.push('<span><b>Registration opened</b> '+esc(localDate(s.registrationOpenAt,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}))+'</span>');if(s?.createdAt)parts.push('<span><b>Created</b> '+esc(localDate(s.createdAt,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}))+'</span>');return parts.length?'<div class="seasonDateMeta">'+parts.join('')+'</div>':''}
 function posFor(s,side){const positions=Array.isArray(s?.account?.positions)?s.account.positions:[];return positions.find(p=>p.side===side)||null}
 function safeSnapshot(s){if(!s||!s.market)return null;const account=s.account&&typeof s.account==="object"?s.account:{};return {market:s.market,account:{balance:Number(account.balance??500),positions:Array.isArray(account.positions)?account.positions:[],trades:Array.isArray(account.trades)?account.trades:[]}}}
