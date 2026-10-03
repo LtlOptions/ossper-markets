@@ -390,6 +390,7 @@ async function initDb() {
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS participant_a_ids UUID[] NOT NULL DEFAULT '{}';
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS participant_b_ids UUID[] NOT NULL DEFAULT '{}';
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ;
     DO $$ BEGIN
       ALTER TABLE season_matches ADD CONSTRAINT season_matches_format_check CHECK (format IN ('1v1','2v2'));
     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
