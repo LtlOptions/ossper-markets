@@ -316,6 +316,123 @@ async function initDb() {
     CREATE UNIQUE INDEX IF NOT EXISTS admin_roles_active_discord_idx ON admin_roles(discord_id) WHERE revoked_at IS NULL;
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS seasons (
+      id UUID PRIMARY KEY,
+      season_number INTEGER NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'DRAFT',
+      starting_balance NUMERIC(18,4) NOT NULL DEFAULT 10000.0000,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      registration_open_at TIMESTAMPTZ,
+      started_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      archived_at TIMESTAMPTZ,
+      created_by TEXT NOT NULL DEFAULT 'admin',
+      CHECK (status IN ('DRAFT','REGISTRATION','LIVE','PAUSED','COMPLETED','ARCHIVED')),
+      CHECK (starting_balance >= 0)
+    );
+    CREATE INDEX IF NOT EXISTS seasons_status_idx ON seasons(status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS season_players (
+      id UUID PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      starting_balance NUMERIC(18,4) NOT NULL,
+      current_balance NUMERIC(18,4) NOT NULL,
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      status TEXT NOT NULL DEFAULT 'ACTIVE',
+      final_rank INTEGER,
+      final_points NUMERIC(18,4),
+      UNIQUE (season_id, account_id),
+      CHECK (status IN ('ACTIVE','SUSPENDED','REMOVED'))
+    );
+    CREATE INDEX IF NOT EXISTS season_players_season_idx ON season_players(season_id, status);
+    CREATE INDEX IF NOT EXISTS season_players_account_idx ON season_players(account_id, joined_at DESC);
+
+    CREATE TABLE IF NOT EXISTS season_wallet_entries (
+      id BIGSERIAL PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      type TEXT NOT NULL,
+      amount NUMERIC(18,4) NOT NULL,
+      balance_after NUMERIC(18,4) NOT NULL,
+      reference_type TEXT,
+      reference_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS season_wallet_entries_season_idx ON season_wallet_entries(season_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS season_wallet_entries_account_idx ON season_wallet_entries(account_id, season_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS season_matches (
+      id UUID PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      match_number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      participant_a TEXT,
+      participant_b TEXT,
+      status TEXT NOT NULL DEFAULT 'SCHEDULED',
+      winner TEXT,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      resolved_by TEXT,
+      UNIQUE (season_id, match_number),
+      CHECK (status IN ('SCHEDULED','LIVE','COMPLETE','CANCELLED'))
+    );
+    CREATE INDEX IF NOT EXISTS season_matches_season_idx ON season_matches(season_id, match_number);
+
+    CREATE TABLE IF NOT EXISTS season_markets (
+      id UUID PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      match_id UUID NOT NULL REFERENCES season_matches(id) ON DELETE RESTRICT,
+      market_id INTEGER NOT NULL REFERENCES markets(id) ON DELETE RESTRICT,
+      UNIQUE (season_id, market_id),
+      UNIQUE (match_id, market_id)
+    );
+    CREATE INDEX IF NOT EXISTS season_markets_season_idx ON season_markets(season_id);
+
+    CREATE TABLE IF NOT EXISTS season_results (
+      id UUID PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      match_id UUID REFERENCES season_matches(id) ON DELETE RESTRICT,
+      market_id INTEGER REFERENCES markets(id) ON DELETE RESTRICT,
+      outcome TEXT NOT NULL,
+      resolved_by TEXT NOT NULL,
+      resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS season_results_season_idx ON season_results(season_id, resolved_at DESC);
+
+    CREATE TABLE IF NOT EXISTS season_stats (
+      id UUID PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      predictions INTEGER NOT NULL DEFAULT 0,
+      correct_predictions INTEGER NOT NULL DEFAULT 0,
+      incorrect_predictions INTEGER NOT NULL DEFAULT 0,
+      points_won NUMERIC(18,4) NOT NULL DEFAULT 0,
+      points_lost NUMERIC(18,4) NOT NULL DEFAULT 0,
+      roi NUMERIC(18,6) NOT NULL DEFAULT 0,
+      accuracy NUMERIC(18,6) NOT NULL DEFAULT 0,
+      current_rank INTEGER,
+      UNIQUE (season_id, account_id)
+    );
+    CREATE INDEX IF NOT EXISTS season_stats_season_idx ON season_stats(season_id, current_rank);
+  `);
+
+  await pool.query(`
+    ALTER TABLE matches ADD COLUMN IF NOT EXISTS season_id UUID REFERENCES seasons(id) ON DELETE SET NULL;
+    ALTER TABLE markets ADD COLUMN IF NOT EXISTS season_id UUID REFERENCES seasons(id) ON DELETE SET NULL;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS season_id UUID REFERENCES seasons(id) ON DELETE SET NULL;
+    ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS season_id UUID REFERENCES seasons(id) ON DELETE SET NULL;
+    ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS season_id UUID REFERENCES seasons(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS matches_season_idx ON matches(season_id);
+    CREATE INDEX IF NOT EXISTS markets_season_idx ON markets(season_id);
+    CREATE INDEX IF NOT EXISTS trades_season_idx ON trades(season_id);
+    CREATE INDEX IF NOT EXISTS ledger_entries_season_idx ON ledger_entries(season_id);
+    CREATE INDEX IF NOT EXISTS audit_logs_season_idx ON audit_logs(season_id);
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS test_runs (
       id UUID PRIMARY KEY,
       status TEXT NOT NULL DEFAULT 'ACTIVE',
@@ -1408,6 +1525,108 @@ app.post("/api/admin/system/freeze", adminOnly, async (req, res) => {
 });
 
 
+
+app.get("/api/admin/seasons", adminOrOwner, async (_req, res) => {
+  try {
+    const q = await pool.query(`
+      SELECT s.*,
+        COALESCE((SELECT COUNT(*) FROM season_players sp WHERE sp.season_id=s.id AND sp.status='ACTIVE'),0)::int AS player_count,
+        COALESCE((SELECT COUNT(*) FROM season_matches sm WHERE sm.season_id=s.id),0)::int AS match_count,
+        COALESCE((SELECT COUNT(*) FROM season_markets sk WHERE sk.season_id=s.id),0)::int AS market_count
+      FROM seasons s
+      ORDER BY s.season_number DESC
+    `);
+    res.set("Cache-Control", "no-store");
+    res.json(q.rows);
+  } catch (e) {
+    console.error("GET /api/admin/seasons", e);
+    res.status(500).json({ error: "Unable to load Test Seasons." });
+  }
+});
+
+app.post("/api/admin/seasons", adminOrOwner, async (req, res) => {
+  const name = String(req.body?.name || "").trim().slice(0, 120);
+  const description = String(req.body?.description || "").trim().slice(0, 1000);
+  const startingBalance = Number(req.body?.startingBalance);
+  if (!name) return res.status(400).json({ error: "Season name is required." });
+  if (!Number.isFinite(startingBalance) || startingBalance < 0 || startingBalance > 1_000_000_000) {
+    return res.status(400).json({ error: "Starting balance must be a valid non-negative amount." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const n = await client.query("SELECT COALESCE(MAX(season_number),0)+1 AS next_number FROM seasons FOR UPDATE");
+    const seasonNumber = Number(n.rows[0].next_number);
+    const id = crypto.randomUUID();
+    const actor = req.admin?.discordId || req.admin?.accountId || "admin";
+    const q = await client.query(`
+      INSERT INTO seasons (id, season_number, name, description, status, starting_balance, created_by)
+      VALUES ($1,$2,$3,$4,'DRAFT',$5,$6)
+      RETURNING *
+    `, [id, seasonNumber, name, description, startingBalance, actor]);
+    await client.query(
+      `INSERT INTO audit_logs (actor, action, details, season_id) VALUES ($1,'TEST_SEASON_CREATED',$2,$3)`,
+      [actor, JSON.stringify({ seasonId: id, seasonNumber, name, startingBalance }), id]
+    );
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true, season: q.rows[0] });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/admin/seasons", e);
+    res.status(400).json({ error: e.message || "Unable to create Test Season." });
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/admin/seasons/:id/status", adminOrOwner, async (req, res) => {
+  const id = String(req.params.id || "");
+  const next = String(req.body?.status || "").toUpperCase();
+  const allowed = new Set(["REGISTRATION","LIVE","PAUSED","COMPLETED","ARCHIVED"]);
+  if (!allowed.has(next)) return res.status(400).json({ error: "Invalid Test Season status." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const q = await client.query("SELECT * FROM seasons WHERE id=$1 FOR UPDATE", [id]);
+    if (!q.rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Test Season not found." }); }
+    const current = q.rows[0];
+    const transitions = {
+      DRAFT: ["REGISTRATION"],
+      REGISTRATION: ["LIVE"],
+      LIVE: ["PAUSED","COMPLETED"],
+      PAUSED: ["LIVE","COMPLETED"],
+      COMPLETED: ["ARCHIVED"],
+      ARCHIVED: []
+    };
+    if (!transitions[current.status]?.includes(next)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: `Cannot change season from ${current.status} to ${next}.` });
+    }
+    const actor = req.admin?.discordId || req.admin?.accountId || "admin";
+    const sets = ["status=$1"];
+    const params = [next];
+    if (next === "REGISTRATION") sets.push(`registration_open_at=COALESCE(registration_open_at,NOW())`);
+    if (next === "LIVE") sets.push(`started_at=COALESCE(started_at,NOW())`);
+    if (next === "COMPLETED") sets.push(`ended_at=COALESCE(ended_at,NOW())`);
+    if (next === "ARCHIVED") sets.push(`archived_at=COALESCE(archived_at,NOW())`);
+    params.push(id);
+    const updated = await client.query(`UPDATE seasons SET ${sets.join(", ")} WHERE id=$${params.length} RETURNING *`, params);
+    await client.query(
+      `INSERT INTO audit_logs (actor, action, details, season_id) VALUES ($1,'TEST_SEASON_STATUS_CHANGED',$2,$3)`,
+      [actor, JSON.stringify({ previousStatus: current.status, newStatus: next }), id]
+    );
+    await client.query("COMMIT");
+    res.json({ ok: true, season: updated.rows[0] });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/admin/seasons/:id/status", e);
+    res.status(400).json({ error: e.message || "Unable to update Test Season." });
+  } finally {
+    client.release();
+  }
+});
 
 app.get("/api/admin/markets", adminOnly, async (_req, res) => {
   await closeExpiredMarkets();
