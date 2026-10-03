@@ -1877,6 +1877,47 @@ app.post("/api/admin/seasons/:seasonId/matches/:matchId/status", adminOrModerato
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to update season match.'});}finally{client.release();}
 });
 
+app.get("/api/season/public", async (_req,res)=>{
+  try{
+    const sq=await pool.query(`
+      SELECT s.id,s.season_number,s.name,s.description,s.status,s.starting_balance,
+             s.registration_open_at,s.started_at,s.ended_at,
+             COALESCE((SELECT COUNT(*) FROM season_players sp WHERE sp.season_id=s.id AND sp.status='ACTIVE'),0)::int AS player_count,
+             COALESCE((SELECT COUNT(*) FROM season_matches sm WHERE sm.season_id=s.id),0)::int AS match_count,
+             COALESCE((SELECT COUNT(*) FROM season_markets sk WHERE sk.season_id=s.id),0)::int AS market_count
+      FROM seasons s
+      WHERE s.status IN ('REGISTRATION','LIVE','PAUSED')
+      ORDER BY CASE s.status WHEN 'LIVE' THEN 0 WHEN 'PAUSED' THEN 1 ELSE 2 END,
+               s.started_at DESC NULLS LAST,s.created_at DESC
+      LIMIT 1
+    `);
+    res.set('Cache-Control','no-store');
+    if(!sq.rows.length) return res.json({active:false,season:null,matches:[]});
+    const s=sq.rows[0];
+    const mq=await pool.query(`
+      SELECT sm.id,sm.match_number,sm.title,sm.participant_a,sm.participant_b,sm.status,
+             sm.winner,sm.scheduled_at,sm.started_at,sm.completed_at,sm.format,sm.description,
+             COALESCE((SELECT COUNT(*) FROM season_markets sx WHERE sx.match_id=sm.id),0)::int AS market_count
+      FROM season_matches sm
+      WHERE sm.season_id=$1
+      ORDER BY sm.match_number ASC
+    `,[s.id]);
+    res.json({
+      active:true,
+      season:{
+        id:s.id,seasonNumber:s.season_number,name:s.name,description:s.description,status:s.status,
+        startingBalance:Number(s.starting_balance),registrationOpenAt:s.registration_open_at,
+        startedAt:s.started_at,endedAt:s.ended_at,
+        playerCount:Number(s.player_count),matchCount:Number(s.match_count),marketCount:Number(s.market_count)
+      },
+      matches:mq.rows
+    });
+  }catch(e){
+    console.error('GET /api/season/public',e);
+    res.status(500).json({error:'Unable to load the active Test Season.'});
+  }
+});
+
 app.get("/api/season/me", async (req,res)=>{
   const accountId=await requestAccountId(req);
   if(!accountId) return res.json({enrolled:false,season:null,player:null});

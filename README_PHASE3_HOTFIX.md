@@ -1,4 +1,4 @@
-# Ossper v2.0.1 — Phase 3 match hotfix
+# Ossper v2.0.2 — Phase 3 public-view hotfix
 
 Fixes based on Phase 3 testing:
 
@@ -10,3 +10,11 @@ Fixes based on Phase 3 testing:
 - Match-load errors now re-render the season page instead of silently leaving stale/empty content.
 
 No tables are dropped, truncated, deleted, or reset. No existing balances are changed by this hotfix.
+
+
+### v2.0.2 addition
+
+- Active Test Seasons are now publicly viewable from the normal Test Season page even when the current account is not enrolled.
+- Non-enrolled users receive view-only access: season status, player/match/market counts, starting points, and match schedule/results are visible, but season wallet, predictions, and trading access remain locked behind enrollment.
+- The simulation/no-real-money labeling remains visible to non-enrolled viewers.
+- The public season view refreshes while the Season page is open.
