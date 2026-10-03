@@ -111,6 +111,12 @@ Adds the additive foundation for Ossper Test Season / Tournament Mode:
 Phase 1 intentionally does not activate season trading or move balances. That begins only after the isolated season wallet and player-enrollment layer is implemented and tested.
 
 
-## v1.8.1 hotfix
+## v1.8.2 hotfix
 
 Phase 1 Test Season API routes are wired to the existing admin UI. Season creation and lifecycle transitions now persist to PostgreSQL with additive, non-destructive migrations and audit events.
+
+
+## v1.8.2 hotfix
+- Fixed PostgreSQL season-number allocation.
+- Replaced invalid `MAX(...) FOR UPDATE` aggregate locking with a transaction-scoped advisory lock.
+- No destructive database operations.

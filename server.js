@@ -1556,7 +1556,8 @@ app.post("/api/admin/seasons", adminOrOwner, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const n = await client.query("SELECT COALESCE(MAX(season_number),0)+1 AS next_number FROM seasons FOR UPDATE");
+    await client.query("SELECT pg_advisory_xact_lock(817263514)");
+    const n = await client.query("SELECT COALESCE(MAX(season_number),0)+1 AS next_number FROM seasons");
     const seasonNumber = Number(n.rows[0].next_number);
     const id = crypto.randomUUID();
     const actor = req.admin?.discordId || req.admin?.accountId || "admin";
