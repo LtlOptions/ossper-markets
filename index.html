@@ -381,7 +381,7 @@ function openHowItWorksDemo(){
   clearTimeout(demoCoachTimer);
   const cursor=document.getElementById('demoCoachCursor');if(cursor)cursor.style.display='none';
   if(!demo){body.innerHTML='<div class="demoUnavailable">The interactive demo market is not currently published. An admin can publish the demo market when you want to run the walkthrough.</div>';back.style.display='flex';return;}
-  body.innerHTML='<div class="demoCoachBanner" id="demoCoachBanner"><b>Watch once, then try it yourself.</b> We'll show the normal BUY → quote flow with a cursor. No trade is submitted during the walkthrough.</div><div class="demoIntro"><b>What you are looking at:</b> this is a real Ossper market interface backed by the normal virtual-money trading flow. After the short walkthrough, the controls are yours to use.</div>'+card(demo);
+  body.innerHTML='<div class="demoCoachBanner" id="demoCoachBanner"><b>Watch once, then try it yourself.</b> We will show the normal BUY → quote flow with a cursor. No trade is submitted during the walkthrough.</div><div class="demoIntro"><b>What you are looking at:</b> this is a real Ossper market interface backed by the normal virtual-money trading flow. After the short walkthrough, the controls are yours to use.</div>'+card(demo);
   back.style.display='flex';
   demoCoachTimer=setTimeout(()=>startDemoCoach(demo.market.id),220);
 }
