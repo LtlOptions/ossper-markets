@@ -1133,57 +1133,51 @@ app.get("/api/portfolio/chart", async (req, res) => {
     const tradeWhere = testRunId ? "t.test_run_id=$1" : "t.test_run_id IS NULL";
     const tradeParams = testRunId ? [testRunId, accountId] : [accountId];
     const accountTradeSql = testRunId
-      ? `SELECT t.id,t.market_id,t.side,t.action,t.quantity,t.price,t.gross,t.fee,t.created_at
-         FROM trades t WHERE t.account_id=$2 AND t.test_run_id=$1 ORDER BY t.created_at ASC,t.id ASC LIMIT 1000`
-      : `SELECT t.id,t.market_id,t.side,t.action,t.quantity,t.price,t.gross,t.fee,t.created_at
-         FROM trades t WHERE t.account_id=$1 AND t.test_run_id IS NULL ORDER BY t.created_at ASC,t.id ASC LIMIT 1000`;
+      ? `SELECT t.id,t.market_id,t.side,t.action,t.quantity,t.price,t.gross,t.fee,t.created_at,le.balance_after
+         FROM trades t LEFT JOIN ledger_entries le ON le.trade_id=t.id AND le.account_id=t.account_id AND le.test_run_id=t.test_run_id
+         WHERE t.account_id=$2 AND t.test_run_id=$1 ORDER BY t.created_at ASC,t.id ASC LIMIT 1000`
+      : `SELECT t.id,t.market_id,t.side,t.action,t.quantity,t.price,t.gross,t.fee,t.created_at,le.balance_after
+         FROM trades t LEFT JOIN ledger_entries le ON le.trade_id=t.id AND le.account_id=t.account_id AND le.test_run_id IS NULL
+         WHERE t.account_id=$1 AND t.test_run_id IS NULL ORDER BY t.created_at ASC,t.id ASC LIMIT 1000`;
     const accountTradesQ = await pool.query(accountTradeSql, tradeParams);
-    if (!accountTradesQ.rows.length) return res.json({ points: [] });
-    const marketIds = [...new Set(accountTradesQ.rows.map(t => Number(t.market_id)))];
-    const marketsQ = await pool.query(`SELECT id,opening_yes_price,yes_price FROM markets WHERE id=ANY($1::int[])`, [marketIds]);
-    const yesPrices = new Map(marketsQ.rows.map(m => [Number(m.id), Number(m.opening_yes_price ?? m.yes_price ?? .5)]));
-    const globalTradeSql = testRunId
+    const currentAccountQ = await pool.query('SELECT balance FROM accounts WHERE id=$1',[accountId]);
+    const currentBalance=Number(currentAccountQ.rows[0]?.balance ?? 500);
+    const positionsQ=await pool.query(`SELECT p.market_id,p.side,p.quantity,p.avg_cost,m.yes_price FROM positions p JOIN markets m ON m.id=p.market_id WHERE p.account_id=$1 AND p.quantity>0`,[accountId]);
+    const currentEquity=currentBalance+positionsQ.rows.reduce((sum,p)=>sum+Number(p.quantity)*(p.side==='YES'?Number(p.yes_price):1-Number(p.yes_price)),0);
+    if(!accountTradesQ.rows.length){
+      const now=new Date().toISOString();
+      return res.json({points:[{t:now,equity:Number(currentEquity.toFixed(4)),event:'Current account equity'}],currentBalance:Number(currentBalance.toFixed(4)),currentEquity:Number(currentEquity.toFixed(4))});
+    }
+    const marketIds=[...new Set(accountTradesQ.rows.map(t=>Number(t.market_id)))];
+    const marketsQ=await pool.query(`SELECT id,opening_yes_price,yes_price FROM markets WHERE id=ANY($1::int[])`,[marketIds]);
+    const yesPrices=new Map(marketsQ.rows.map(m=>[Number(m.id),Number(m.opening_yes_price ?? m.yes_price ?? .5)]));
+    const globalTradeSql=testRunId
       ? `SELECT market_id,side,price,created_at,id FROM trades WHERE test_run_id=$1 AND market_id=ANY($2::int[]) ORDER BY created_at ASC,id ASC LIMIT 10000`
       : `SELECT market_id,side,price,created_at,id FROM trades WHERE test_run_id IS NULL AND market_id=ANY($1::int[]) ORDER BY created_at ASC,id ASC LIMIT 10000`;
-    const globalParams = testRunId ? [testRunId, marketIds] : [marketIds];
-    const globalTradesQ = await pool.query(globalTradeSql, globalParams);
-    const firstLedgerQ = testRunId
-      ? await pool.query(`SELECT balance_before FROM ledger_entries WHERE account_id=$1 AND test_run_id=$2 ORDER BY created_at ASC,id ASC LIMIT 1`, [accountId,testRunId])
-      : await pool.query(`SELECT balance_before FROM ledger_entries WHERE account_id=$1 AND test_run_id IS NULL ORDER BY created_at ASC,id ASC LIMIT 1`, [accountId]);
-    let cash = firstLedgerQ.rows.length ? Number(firstLedgerQ.rows[0].balance_before) : 500;
-    const positions = new Map();
-    const points = [];
-    let gi = 0;
-    const globals = globalTradesQ.rows;
-    for (const t of accountTradesQ.rows) {
-      const at = new Date(t.created_at).getTime();
-      while (gi < globals.length && new Date(globals[gi].created_at).getTime() <= at) {
-        const gt = globals[gi++];
-        const gp = Number(gt.price);
-        yesPrices.set(Number(gt.market_id), gt.side === 'YES' ? gp : 1 - gp);
-      }
-      const marketId = Number(t.market_id), qty = Number(t.quantity), gross = Number(t.gross), fee = Number(t.fee || 0), price = Number(t.price);
-      cash = Number((cash + (t.action === 'BUY' ? -(gross + fee) : (gross - fee))).toFixed(4));
-      const key = `${marketId}:${t.side}`;
-      const nextQty = Math.max(0, Number(positions.get(key) || 0) + (t.action === 'BUY' ? qty : -qty));
-      if (nextQty) positions.set(key, nextQty); else positions.delete(key);
-      yesPrices.set(marketId, t.side === 'YES' ? price : 1 - price);
-      let equity = cash;
-      for (const [k,q] of positions) {
-        const [mid,side] = k.split(':');
-        const yp = Number(yesPrices.get(Number(mid)) ?? .5);
-        equity += q * (side === 'YES' ? yp : 1 - yp);
-      }
+    const globalParams=testRunId?[testRunId,marketIds]:[marketIds];
+    const globalTradesQ=await pool.query(globalTradeSql,globalParams);
+    const positions=new Map(),points=[];let gi=0;const globals=globalTradesQ.rows;
+    for(const t of accountTradesQ.rows){
+      const at=new Date(t.created_at).getTime();
+      while(gi<globals.length && new Date(globals[gi].created_at).getTime()<=at){const gt=globals[gi++],gp=Number(gt.price);yesPrices.set(Number(gt.market_id),gt.side==='YES'?gp:1-gp)}
+      const marketId=Number(t.market_id),qty=Number(t.quantity),price=Number(t.price),key=`${marketId}:${t.side}`;
+      const nextQty=Math.max(0,Number(positions.get(key)||0)+(t.action==='BUY'?qty:-qty));
+      if(nextQty)positions.set(key,nextQty);else positions.delete(key);
+      yesPrices.set(marketId,t.side==='YES'?price:1-price);
+      const cash=Number(t.balance_after!=null?t.balance_after:currentBalance);
+      let equity=cash;
+      for(const [k,q] of positions){const [mid,side]=k.split(':');const yp=Number(yesPrices.get(Number(mid))??.5);equity+=q*(side==='YES'?yp:1-yp)}
       points.push({t:t.created_at,equity:Number(equity.toFixed(4)),event:`${t.action} ${t.side} · ${qty} contracts`});
     }
+    const now=new Date().toISOString();
+    points.push({t:now,equity:Number(currentEquity.toFixed(4)),event:'Current account equity'});
     res.set('Cache-Control','no-store');
-    res.json({ points });
+    res.json({points,currentBalance:Number(currentBalance.toFixed(4)),currentEquity:Number(currentEquity.toFixed(4))});
   } catch (e) {
     console.error('portfolio chart', e);
     res.status(500).json({ error: "Unable to load portfolio chart." });
   }
 });
-
 app.get("/api/wagers/users", async (req, res) => {
   try {
     const accountId = await requestAccountId(req);
@@ -1887,7 +1881,7 @@ app.get("/api/season/public", async (_req,res)=>{
   try{
     const sq=await pool.query(`
       SELECT s.id,s.season_number,s.name,s.description,s.status,s.starting_balance,
-             s.registration_open_at,s.started_at,s.ended_at,
+             s.created_at,s.registration_open_at,s.started_at,s.ended_at,
              COALESCE((SELECT COUNT(*) FROM season_players sp WHERE sp.season_id=s.id AND sp.status='ACTIVE'),0)::int AS player_count,
              COALESCE((SELECT COUNT(*) FROM season_matches sm WHERE sm.season_id=s.id),0)::int AS match_count,
              COALESCE((SELECT COUNT(*) FROM season_markets sk WHERE sk.season_id=s.id),0)::int AS market_count
@@ -1912,7 +1906,7 @@ app.get("/api/season/public", async (_req,res)=>{
       active:true,
       season:{
         id:s.id,seasonNumber:s.season_number,name:s.name,description:s.description,status:s.status,
-        startingBalance:Number(s.starting_balance),registrationOpenAt:s.registration_open_at,
+        startingBalance:Number(s.starting_balance),createdAt:s.created_at,registrationOpenAt:s.registration_open_at,
         startedAt:s.started_at,endedAt:s.ended_at,
         playerCount:Number(s.player_count),matchCount:Number(s.match_count),marketCount:Number(s.market_count)
       },
@@ -1930,7 +1924,7 @@ app.get("/api/season/me", async (req,res)=>{
   try{
     const q=await pool.query(`
       SELECT s.id AS season_id,s.season_number,s.name,s.description,s.status,s.starting_balance,
-             s.registration_open_at,s.started_at,s.ended_at,
+             s.created_at,s.registration_open_at,s.started_at,s.ended_at,
              sp.id AS player_id,sp.status AS player_status,sp.starting_balance AS player_starting_balance,
              sp.current_balance,sp.locked_balance,sp.realized_pnl,sp.total_wagered,sp.total_winnings,sp.total_losses,
              COALESCE(ss.predictions,0)::int AS predictions,
@@ -1951,7 +1945,7 @@ app.get("/api/season/me", async (req,res)=>{
     const locked=Number(r.locked_balance||0);
     res.json({
       enrolled:true,
-      season:{id:r.season_id,seasonNumber:r.season_number,name:r.name,description:r.description,status:r.status,startingBalance:Number(r.starting_balance),registrationOpenAt:r.registration_open_at,startedAt:r.started_at,endedAt:r.ended_at},
+      season:{id:r.season_id,seasonNumber:r.season_number,name:r.name,description:r.description,status:r.status,startingBalance:Number(r.starting_balance),createdAt:r.created_at,registrationOpenAt:r.registration_open_at,startedAt:r.started_at,endedAt:r.ended_at},
       player:{id:r.player_id,status:r.player_status,startingBalance:Number(r.player_starting_balance),currentPoints:totalPoints,availablePoints:Math.max(0,totalPoints-locked),lockedPoints:locked,realizedPnl:Number(r.realized_pnl||0),totalWagered:Number(r.total_wagered||0),totalWinnings:Number(r.total_winnings||0),totalLosses:Number(r.total_losses||0),predictions:Number(r.predictions||0),correctPredictions:Number(r.correct_predictions||0),incorrectPredictions:Number(r.incorrect_predictions||0),accuracy:Number(r.accuracy||0),roi:Number(r.roi||0),rank:r.current_rank||null}
     });
   }catch(e){console.error("GET /api/season/me",e);res.status(500).json({error:"Unable to load your Test Season wallet."});}
