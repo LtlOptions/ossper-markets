@@ -91,3 +91,7 @@ Virtual-money demo only. Do not treat this as a real-money platform.
 - Fixed Admin Discord login navigation and added working admin-key sign-in.
 - Restored glass surfaces in Admin and Test Control.
 - Added theme/accent/surface previews to Settings selectors.
+
+
+## v1.7.8
+- Fixed market-chart hover/touch crosshair alignment by mapping pointer coordinates to the SVG plot area rather than the full SVG including the Y-axis label gutter.
