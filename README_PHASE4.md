@@ -25,3 +25,12 @@ This pass focuses on the public tournament experience without rebuilding the mar
 ## Deliberately deferred
 
 Portfolio chart coordinate work, notification mutual-close behavior, admin/test theme audit, and other Phase 4 polish items remain separate follow-up steps so the tournament change can be tested independently.
+
+## v2.2.1 — Interactive How It Works / Demo Access
+- Promoted How It Works to a primary Home action beside Explore Markets.
+- Converted How It Works information panels into interactive actions.
+- Added guided highlights for Markets, Prices, Buying & Selling, Position Status, Lifecycle, Depth, Notifications, Wagers, Simulation Mode, and Activity.
+- Notification guide step highlights the bell and completes when the bell is opened.
+- Added an on-demand interactive demo market launched from How It Works.
+- Removed the always-visible demo market from normal Home, Markets, Tournaments, and wager pickers; it remains available through the guide.
+- Preserved existing virtual-money trading flow and backend logic.
