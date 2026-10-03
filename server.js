@@ -624,6 +624,8 @@ async function initDb() {
   await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS avatar_url TEXT`);
   await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'guest'`);
   await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS test_roster_key TEXT`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS accounts_test_roster_key_idx ON accounts(test_roster_key) WHERE test_roster_key IS NOT NULL`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS accounts_discord_id_idx ON accounts(discord_id) WHERE discord_id IS NOT NULL`);
   await pool.query(`UPDATE markets SET opening_yes_price=yes_price WHERE opening_yes_price IS NULL OR opening_yes_price=0`);
   await pool.query(`UPDATE markets SET liquidity=100.00 WHERE liquidity IS NULL OR liquidity<=0`);
@@ -1820,6 +1822,74 @@ app.post("/api/admin/seasons/:id/players", adminOrOwner, async (req, res) => {
   } finally { client.release(); }
 });
 
+app.post("/api/admin/seasons/:seasonId/roster-import", adminOrOwner, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||'');
+  const raw=String(req.body?.roster||'');
+  const lines=raw.split(/\r?\n/).map(v=>v.trim()).filter(Boolean);
+  if(!lines.length) return res.status(400).json({error:'Paste at least 2 player names.'});
+  if(lines.length>32) return res.status(400).json({error:'Roster import is capped at 32 players for this test engine.'});
+  const parsed=[];
+  const seen=new Set();
+  for(const line of lines){
+    const parts=line.split(/\s*\|\s*|\s*,\s*/,2).map(v=>v.trim()).filter(Boolean);
+    const displayName=String(parts[0]||'').slice(0,100);
+    const suppliedDiscordId=parts[1] ? String(parts[1]).slice(0,100) : '';
+    if(displayName.length<1) continue;
+    const key=(suppliedDiscordId||displayName).toLowerCase();
+    if(seen.has(key)) return res.status(400).json({error:`Duplicate roster entry: ${displayName}`});
+    seen.add(key);
+    parsed.push({displayName,suppliedDiscordId});
+  }
+  if(parsed.length<2) return res.status(400).json({error:'At least 2 players are required.'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const sq=await client.query('SELECT * FROM seasons WHERE id=$1 FOR UPDATE',[seasonId]);
+    if(!sq.rows.length) throw new Error('Test Season not found.');
+    const season=sq.rows[0];
+    if(!['DRAFT','REGISTRATION'].includes(season.status)) throw new Error('Roster import is only available before the test season starts.');
+    const existingMatches=await client.query('SELECT COUNT(*)::int AS count FROM season_matches WHERE season_id=$1',[seasonId]);
+    if(Number(existingMatches.rows[0].count)>0) throw new Error('This season already has matches. Import the roster before generating the bracket.');
+    const starting=Number(season.starting_balance);
+    const imported=[];
+    for(const entry of parsed){
+      const rosterKey='ossper-test-roster:'+crypto.createHash('sha256').update((entry.suppliedDiscordId||entry.displayName).toLowerCase()).digest('hex').slice(0,40);
+      let aq=await client.query('SELECT id,display_name,discord_id FROM accounts WHERE test_roster_key=$1 FOR UPDATE',[rosterKey]);
+      let account;
+      if(aq.rows.length){
+        account=aq.rows[0];
+        await client.query(`UPDATE accounts SET display_name=$1, discord_id=$2, auth_provider='test' WHERE id=$3`,[entry.displayName,entry.suppliedDiscordId||account.discord_id||('test:'+rosterKey.slice(-12)),account.id]);
+      }else{
+        const id=crypto.randomUUID();
+        const discordId=entry.suppliedDiscordId||('test:'+rosterKey.slice(-12));
+        const ins=await client.query(`INSERT INTO accounts(id,balance,discord_id,display_name,auth_provider,test_roster_key) VALUES($1,500,$2,$3,'test',$4) RETURNING id,display_name,discord_id`,[id,discordId,entry.displayName,rosterKey]);
+        account=ins.rows[0];
+      }
+      const existing=await client.query('SELECT * FROM season_players WHERE season_id=$1 AND account_id=$2 FOR UPDATE',[seasonId,account.id]);
+      let player;
+      if(existing.rows.length && existing.rows[0].status==='ACTIVE'){
+        player=existing.rows[0];
+      }else if(existing.rows.length && existing.rows[0].status==='REMOVED'){
+        const upd=await client.query(`UPDATE season_players SET status='ACTIVE',starting_balance=$1,current_balance=$1,locked_balance=0,realized_pnl=0,total_wagered=0,total_winnings=0,total_losses=0,competitive_points=0,matches_played=0,wins=0,losses=0,tournaments_played=0,tournament_wins=0,joined_at=NOW(),final_rank=NULL,final_points=NULL WHERE id=$2 RETURNING *`,[starting,existing.rows[0].id]);
+        player=upd.rows[0];
+        await client.query(`INSERT INTO season_wallet_entries(season_id,account_id,type,amount,balance_after,reference_type,reference_id) VALUES($1,$2,'SEASON_REENROLLED',$3,$3,'SEASON_PLAYER',$4)`,[seasonId,account.id,starting,String(player.id)]);
+      }else{
+        const id=crypto.randomUUID();
+        const ins=await client.query(`INSERT INTO season_players(id,season_id,account_id,starting_balance,current_balance,locked_balance,status) VALUES($1,$2,$3,$4,$4,0,'ACTIVE') RETURNING *`,[id,seasonId,account.id,starting]);
+        player=ins.rows[0];
+        await client.query(`INSERT INTO season_wallet_entries(season_id,account_id,type,amount,balance_after,reference_type,reference_id) VALUES($1,$2,'SEASON_INITIAL_BALANCE',$3,$3,'SEASON_PLAYER',$4)`,[seasonId,account.id,starting,id]);
+        await client.query(`INSERT INTO season_stats(id,season_id,account_id) VALUES($1,$2,$3) ON CONFLICT (season_id,account_id) DO NOTHING`,[crypto.randomUUID(),seasonId,account.id]);
+      }
+      imported.push({accountId:account.id,playerId:player.id,displayName:entry.displayName,discordId:account.discord_id,testAccount:true});
+    }
+    const actor=req.admin?.discordId||req.admin?.accountId||'admin';
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_ROSTER_IMPORTED',$2,$3)`,[actor,JSON.stringify({count:imported.length,players:imported.map(x=>({accountId:x.accountId,displayName:x.displayName,discordId:x.discordId}))}),seasonId]);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,count:imported.length,players:imported});
+  }catch(e){await client.query('ROLLBACK');console.error('POST season roster import',e);res.status(400).json({error:e.message||'Unable to import roster.'});}
+  finally{client.release();}
+});
+
 app.post("/api/admin/seasons/:seasonId/players/:playerId/status", adminOrOwner, async (req,res)=>{
   const seasonId=String(req.params.seasonId||"");
   const playerId=String(req.params.playerId||"");
@@ -2047,12 +2117,15 @@ app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,re
     const pq=await client.query(`SELECT sp.account_id,COALESCE(a.display_name,'Unnamed') AS display_name FROM season_players sp JOIN accounts a ON a.id=sp.account_id WHERE sp.season_id=$1 AND sp.status='ACTIVE' ORDER BY RANDOM()`,[seasonId]);
     const players=pq.rows;
     if(players.length<2) throw new Error('At least 2 active players are required.');
-    if((players.length & (players.length-1))!==0) throw new Error('Automatic brackets currently require a power-of-two field: 2, 4, 8, 16, 32, etc. Add/remove players before generating the bracket.');
     if(players.length>32) throw new Error('Automatic brackets are capped at 32 players for this patch.');
     const bracketId=crypto.randomUUID();
+    const targetSize=2 ** Math.ceil(Math.log2(players.length));
+    const shuffled=[...players];
+    for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
+    while(shuffled.length<targetSize) shuffled.push(null);
     const rounds=[]; let current=[];
-    for(let i=0;i<players.length;i+=2){
-      current.push({id:crypto.randomUUID(),round:1,slot:i/2+1,a:[players[i]],b:[players[i+1]]});
+    for(let i=0;i<shuffled.length;i+=2){
+      current.push({id:crypto.randomUUID(),round:1,slot:i/2+1,a:shuffled[i]?[shuffled[i]]:[],b:shuffled[i+1]?[shuffled[i+1]]:[]});
     }
     rounds.push(current);
     let prev=current;
@@ -2068,7 +2141,32 @@ app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,re
       const aLabel=m.a.map(x=>x.display_name).join(' + ') || 'TBD';
       const bLabel=m.b.map(x=>x.display_name).join(' + ') || 'TBD';
       const title=`Round ${m.round} · Match ${m.slot} · ${aLabel} vs ${bLabel}`;
-      await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,format,participant_a_ids,participant_b_ids,description,round_number,bracket_slot,bracket_id) VALUES ($1,$2,(SELECT COALESCE(MAX(match_number),0)+1 FROM season_matches WHERE season_id=$2),$3,$4,$5,'SCHEDULED','1v1',$6::uuid[],$7::uuid[],$8,$9,$10,$11)`,[m.id,seasonId,title,aLabel,bLabel,aIds,bIds,`Automatic single-elimination bracket · Round ${m.round}`,m.round,m.slot,bracketId]);
+      const byeWinner = aIds.length===1 && bIds.length===0 ? 'A' : (aIds.length===0 && bIds.length===1 ? 'B' : null);
+      const status = byeWinner ? 'COMPLETE' : 'SCHEDULED';
+      const winnerLabel = byeWinner==='A' ? aLabel : byeWinner==='B' ? bLabel : null;
+      await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,format,participant_a_ids,participant_b_ids,description,round_number,bracket_slot,bracket_id,winner,winner_side,resolved_by,completed_at,result_recorded_at) VALUES ($1,$2,(SELECT COALESCE(MAX(match_number),0)+1 FROM season_matches WHERE season_id=$2),$3,$4,$5,$6,'1v1',$7::uuid[],$8::uuid[],$9,$10,$11,$12,$13,$14,$15,$16,$17)`,[m.id,seasonId,title,aLabel,bLabel,status,aIds,bIds,`Automatic single-elimination bracket · Round ${m.round}${byeWinner?' · BYE':''}`,m.round,m.slot,bracketId,winnerLabel,byeWinner,byeWinner?'system:bye':null,byeWinner?new Date().toISOString():null,byeWinner?new Date().toISOString():null]);
+    }
+    // Propagate BYE winners through the bracket without awarding ELO or competitive points.
+    for(let r=0;r<rounds.length-1;r++){
+      for(let i=0;i<rounds[r].length;i++){
+        const match=rounds[r][i];
+        const next=rounds[r+1][Math.floor(i/2)];
+        const winner=match.a.length===1 && match.b.length===0 ? match.a[0] : (match.a.length===0 && match.b.length===1 ? match.b[0] : null);
+        if(winner){
+          const target=(i%2===0)?'A':'B';
+          if(target==='A'){next.a=[winner];}else{next.b=[winner];}
+        }
+      }
+    }
+    // Any newly-created one-player slots are also BYEs; mark them complete now.
+    for(const m of rounds.flat()){
+      if(m.round===1) continue;
+      const winner = m.a.length===1 && m.b.length===0 ? m.a[0] : (m.a.length===0 && m.b.length===1 ? m.b[0] : null);
+      if(winner){
+        const label=m.a.length===1?m.a[0].display_name:m.b[0].display_name;
+        const side=m.a.length===1?'A':'B';
+        await client.query(`UPDATE season_matches SET participant_a_ids=$1::uuid[],participant_b_ids=$2::uuid[],participant_a=$3,participant_b=$4,status='COMPLETE',winner=$5,winner_side=$6,resolved_by='system:bye',completed_at=NOW(),result_recorded_at=NOW() WHERE id=$7`,[m.a.map(x=>x.account_id),m.b.map(x=>x.account_id),m.a.map(x=>x.display_name).join(' + ')||'TBD',m.b.map(x=>x.display_name).join(' + ')||'TBD',label,side,m.id]);
+      }
     }
     for(let r=0;r<rounds.length-1;r++){
       for(let i=0;i<rounds[r].length;i++){
@@ -2079,7 +2177,8 @@ app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,re
     const actor=req.admin?.accountId||req.admin?.discordId||'admin';
     await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_BRACKET_GENERATED',$2,$3)`,[actor,JSON.stringify({bracketId,format,playerCount:players.length,rounds:rounds.length}),seasonId]);
     await client.query('COMMIT');
-    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:rounds.length});
+    const byeCount=rounds.flat().filter(m=>m.status==='COMPLETE').length;
+    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:rounds.length,byes:byeCount});
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to generate bracket.'});}
   finally{client.release();}
 });
