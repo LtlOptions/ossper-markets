@@ -431,6 +431,63 @@ async function initDb() {
       UNIQUE (season_id, account_id)
     );
     CREATE INDEX IF NOT EXISTS season_stats_season_idx ON season_stats(season_id, current_rank);
+
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS competitive_points NUMERIC(18,4) NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS matches_played INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS wins INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS losses INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS tournaments_played INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS tournament_wins INTEGER NOT NULL DEFAULT 0;
+
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS round_number INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS bracket_slot INTEGER;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS next_match_id UUID REFERENCES season_matches(id) ON DELETE SET NULL;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS bracket_id UUID;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS winner_side TEXT;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS result_recorded_at TIMESTAMPTZ;
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_winner_side_check CHECK (winner_side IS NULL OR winner_side IN ('A','B'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+    CREATE TABLE IF NOT EXISTS season_point_entries (
+      id UUID PRIMARY KEY,
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      match_id UUID REFERENCES season_matches(id) ON DELETE RESTRICT,
+      entry_type TEXT NOT NULL,
+      points NUMERIC(18,4) NOT NULL,
+      balance_before NUMERIC(18,4) NOT NULL,
+      balance_after NUMERIC(18,4) NOT NULL,
+      reference TEXT,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS season_point_entries_season_idx ON season_point_entries(season_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS season_point_entries_account_idx ON season_point_entries(account_id, season_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS player_ratings (
+      account_id UUID PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+      rating INTEGER NOT NULL DEFAULT 1200,
+      matches_played INTEGER NOT NULL DEFAULT 0,
+      wins INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0,
+      peak_rating INTEGER NOT NULL DEFAULT 1200,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS rating_history (
+      id UUID PRIMARY KEY,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      season_id UUID REFERENCES seasons(id) ON DELETE SET NULL,
+      match_id UUID REFERENCES season_matches(id) ON DELETE SET NULL,
+      rating_before INTEGER NOT NULL,
+      rating_after INTEGER NOT NULL,
+      delta INTEGER NOT NULL,
+      opponent_rating INTEGER,
+      result TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS rating_history_account_idx ON rating_history(account_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS player_ratings_rating_idx ON player_ratings(rating DESC, updated_at ASC);
   `);
 
   await pool.query(`
@@ -1787,6 +1844,129 @@ app.post("/api/admin/seasons/:seasonId/players/:playerId/status", adminOrOwner, 
   finally{client.release();}
 });
 
+/* Phase 5 — Competitive tournament engine */
+const COMPETITIVE_POINTS = Object.freeze({ PARTICIPATION: 10, WIN: 25 });
+const ELO_START = 1200;
+const ELO_K = 32;
+
+function eloExpected(playerRating, opponentRating) {
+  return 1 / (1 + Math.pow(10, (opponentRating - playerRating) / 400));
+}
+
+async function ensurePlayerRating(client, accountId) {
+  const q = await client.query(`
+    INSERT INTO player_ratings (account_id, rating, peak_rating)
+    VALUES ($1,$2,$2)
+    ON CONFLICT (account_id) DO UPDATE SET account_id=EXCLUDED.account_id
+    RETURNING *
+  `, [accountId, ELO_START]);
+  return q.rows[0];
+}
+
+async function awardCompetitivePoints(client, { seasonId, accountId, matchId, entryType, points, details = {} }) {
+  const existing = await client.query(`
+    SELECT id FROM season_point_entries
+    WHERE season_id=$1 AND account_id=$2 AND match_id=$3 AND entry_type=$4
+    LIMIT 1
+  `, [seasonId, accountId, matchId, entryType]);
+  if (existing.rows.length) return { awarded: false };
+  const locked = await client.query(`SELECT competitive_points FROM season_players WHERE season_id=$1 AND account_id=$2 FOR UPDATE`, [seasonId, accountId]);
+  if (!locked.rows.length) throw new Error('Competitive player record not found.');
+  const before = Number(locked.rows[0].competitive_points || 0);
+  const after = before + Number(points);
+  await client.query(`UPDATE season_players SET competitive_points=$1 WHERE season_id=$2 AND account_id=$3`, [after, seasonId, accountId]);
+  await client.query(`
+    INSERT INTO season_point_entries (id,season_id,account_id,match_id,entry_type,points,balance_before,balance_after,reference,details)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+  `, [crypto.randomUUID(), seasonId, accountId, matchId, entryType, points, before, after, `MATCH:${matchId}:${entryType}`, JSON.stringify(details)]);
+  return { awarded: true, before, after };
+}
+
+async function recordCompetitiveMatchResult(client, matchId, winnerSide, actor) {
+  const q = await client.query(`SELECT * FROM season_matches WHERE id=$1 FOR UPDATE`, [matchId]);
+  if (!q.rows.length) throw new Error('Season match not found.');
+  const match = q.rows[0];
+  if (match.status !== 'LIVE') throw new Error('Only LIVE matches can be completed.');
+  if (!['A','B'].includes(winnerSide)) throw new Error('Winner side must be A or B.');
+  const winners = winnerSide === 'A' ? (match.participant_a_ids || []) : (match.participant_b_ids || []);
+  const losers = winnerSide === 'A' ? (match.participant_b_ids || []) : (match.participant_a_ids || []);
+  if (!winners.length || !losers.length) throw new Error('Both sides need enrolled players before recording a result.');
+
+  const allIds = [...new Set([...winners, ...losers])];
+  const ratings = new Map();
+  for (const id of allIds) ratings.set(id, await ensurePlayerRating(client, id));
+  const avg = ids => ids.reduce((sum,id)=>sum+Number(ratings.get(id)?.rating||ELO_START),0)/ids.length;
+  const winnerAvg = avg(winners), loserAvg = avg(losers);
+  const winnerExpected = eloExpected(winnerAvg, loserAvg);
+  const winnerDelta = Math.max(-ELO_K, Math.min(ELO_K, Math.round(ELO_K * (1 - winnerExpected))));
+  const loserDelta = -winnerDelta;
+
+  for (const id of allIds) {
+    const isWinner = winners.includes(id);
+    const before = Number(ratings.get(id).rating || ELO_START);
+    const delta = isWinner ? winnerDelta : loserDelta;
+    const after = before + delta;
+    const r = await client.query(`
+      INSERT INTO player_ratings (account_id,rating,matches_played,wins,losses,peak_rating,updated_at)
+      VALUES ($1,$2,1,$3,$4,$2,NOW())
+      ON CONFLICT (account_id) DO UPDATE SET
+        rating=$2,
+        matches_played=player_ratings.matches_played+1,
+        wins=player_ratings.wins+$3,
+        losses=player_ratings.losses+$4,
+        peak_rating=GREATEST(player_ratings.peak_rating,$2),
+        updated_at=NOW()
+      RETURNING *
+    `, [id, after, isWinner ? 1 : 0, isWinner ? 0 : 1]);
+    await client.query(`INSERT INTO rating_history (id,account_id,season_id,match_id,rating_before,rating_after,delta,opponent_rating,result) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [crypto.randomUUID(), id, match.season_id, match.id, before, after, delta, Math.round(isWinner ? loserAvg : winnerAvg), isWinner ? 'WIN' : 'LOSS']);
+    await client.query(`UPDATE season_players SET matches_played=matches_played+1,wins=wins+$1,losses=losses+$2 WHERE season_id=$3 AND account_id=$4`, [isWinner ? 1 : 0, isWinner ? 0 : 1, match.season_id, id]);
+    await awardCompetitivePoints(client,{seasonId:match.season_id,accountId:id,matchId:match.id,entryType:'MATCH_PARTICIPATION',points:COMPETITIVE_POINTS.PARTICIPATION,details:{round:match.round_number}});
+    if (isWinner) await awardCompetitivePoints(client,{seasonId:match.season_id,accountId:id,matchId:match.id,entryType:'MATCH_WIN',points:COMPETITIVE_POINTS.WIN,details:{round:match.round_number}});
+  }
+
+  await client.query(`UPDATE season_matches SET status='COMPLETE',winner=$1,winner_side=$2,resolved_by=$3,completed_at=COALESCE(completed_at,NOW()),result_recorded_at=NOW() WHERE id=$4`, [winnerSide === 'A' ? match.participant_a : match.participant_b, winnerSide, actor, match.id]);
+  await client.query(`INSERT INTO season_results (id,season_id,match_id,outcome,resolved_by) VALUES ($1,$2,$3,$4,$5)`, [crypto.randomUUID(), match.season_id, match.id, winnerSide, actor]);
+  await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_MATCH_RESULT_RECORDED',$2,$3)`, [actor, JSON.stringify({matchId:match.id,winnerSide,winnerIds:winners,loserIds:losers,eloDelta:winnerDelta,points:COMPETITIVE_POINTS}), match.season_id]);
+
+  // If this match feeds another bracket slot, place the winner into the next match automatically.
+  if (match.next_match_id) {
+    const nextQ = await client.query(`SELECT * FROM season_matches WHERE id=$1 FOR UPDATE`, [match.next_match_id]);
+    if (nextQ.rows.length) {
+      const next = nextQ.rows[0];
+      const target = (Number(match.bracket_slot||1) % 2 === 1) ? 'A' : 'B';
+      const col = target === 'A' ? 'participant_a_ids' : 'participant_b_ids';
+      const labelCol = target === 'A' ? 'participant_a' : 'participant_b';
+      const ids = winners;
+      await client.query(`UPDATE season_matches SET ${col}=$1::uuid[], ${labelCol}=$2 WHERE id=$3`, [ids, winnerSide === 'A' ? match.participant_a : match.participant_b, next.id]);
+    }
+  }
+  return {matchId:match.id,winnerSide,winnerIds:winners,loserIds:losers,eloDelta:winnerDelta};
+}
+
+app.get('/api/admin/seasons/:seasonId/leaderboard', adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||'');
+  try{
+    const q=await pool.query(`
+      SELECT sp.account_id,COALESCE(a.display_name,'Unnamed') AS display_name,a.discord_id,
+             sp.competitive_points,sp.matches_played,sp.wins,sp.losses,sp.tournaments_played,sp.tournament_wins,
+             COALESCE(pr.rating,$2)::int AS rating,
+             COALESCE(pr.peak_rating,$2)::int AS peak_rating
+      FROM season_players sp JOIN accounts a ON a.id=sp.account_id
+      LEFT JOIN player_ratings pr ON pr.account_id=sp.account_id
+      WHERE sp.season_id=$1 AND sp.status IN ('ACTIVE','SUSPENDED')
+      ORDER BY sp.competitive_points DESC, COALESCE(pr.rating,$2) DESC, sp.wins DESC, LOWER(COALESCE(a.display_name,'')) ASC
+    `,[seasonId,ELO_START]);
+    res.set('Cache-Control','no-store');res.json(q.rows);
+  }catch(e){res.status(500).json({error:'Unable to load competitive leaderboard.'});}
+});
+
+app.get('/api/leaderboard', async (_req,res)=>{
+  try{
+    const q=await pool.query(`SELECT pr.account_id,COALESCE(a.display_name,'Unnamed') AS display_name,a.discord_id,pr.rating,pr.peak_rating,pr.matches_played,pr.wins,pr.losses FROM player_ratings pr JOIN accounts a ON a.id=pr.account_id ORDER BY pr.rating DESC,pr.wins DESC,LOWER(COALESCE(a.display_name,'')) ASC LIMIT 100`);
+    res.set('Cache-Control','no-store');res.json(q.rows);
+  }catch(e){res.status(500).json({error:'Unable to load ELO leaderboard.'});}
+});
+
 /* Phase 3 — Test Season match integration */
 app.get("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,res)=>{
   const seasonId=String(req.params.seasonId||"");
@@ -1851,9 +2031,63 @@ app.post("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,re
   finally{client.release();}
 });
 
+app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||'');
+  const format=String(req.body?.format||'1v1').toLowerCase();
+  if(format!=='1v1') return res.status(400).json({error:'Automatic bracket generation currently supports 1v1. 2v2 remains available through manual match creation.'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const sq=await client.query('SELECT * FROM seasons WHERE id=$1 FOR UPDATE',[seasonId]);
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`season-bracket-${seasonId}`]);
+    if(!sq.rows.length) throw new Error('Season not found.');
+    if(!['REGISTRATION','LIVE'].includes(sq.rows[0].status)) throw new Error('The season must be in registration or live status to generate a bracket.');
+    const existing=await client.query('SELECT COUNT(*)::int AS count FROM season_matches WHERE season_id=$1',[seasonId]);
+    if(Number(existing.rows[0].count)>0) throw new Error('This season already has matches. Generate the bracket before creating matches.');
+    const pq=await client.query(`SELECT sp.account_id,COALESCE(a.display_name,'Unnamed') AS display_name FROM season_players sp JOIN accounts a ON a.id=sp.account_id WHERE sp.season_id=$1 AND sp.status='ACTIVE' ORDER BY RANDOM()`,[seasonId]);
+    const players=pq.rows;
+    if(players.length<2) throw new Error('At least 2 active players are required.');
+    if((players.length & (players.length-1))!==0) throw new Error('Automatic brackets currently require a power-of-two field: 2, 4, 8, 16, 32, etc. Add/remove players before generating the bracket.');
+    if(players.length>32) throw new Error('Automatic brackets are capped at 32 players for this patch.');
+    const bracketId=crypto.randomUUID();
+    const rounds=[]; let current=[];
+    for(let i=0;i<players.length;i+=2){
+      current.push({id:crypto.randomUUID(),round:1,slot:i/2+1,a:[players[i]],b:[players[i+1]]});
+    }
+    rounds.push(current);
+    let prev=current;
+    let round=2;
+    while(prev.length>1){
+      const next=[];
+      for(let i=0;i<prev.length;i+=2) next.push({id:crypto.randomUUID(),round,slot:i/2+1,a:[],b:[]});
+      rounds.push(next); prev=next; round++;
+    }
+    const all=rounds.flat();
+    for(const m of all){
+      const aIds=m.a.map(x=>x.account_id), bIds=m.b.map(x=>x.account_id);
+      const aLabel=m.a.map(x=>x.display_name).join(' + ') || 'TBD';
+      const bLabel=m.b.map(x=>x.display_name).join(' + ') || 'TBD';
+      const title=`Round ${m.round} · Match ${m.slot} · ${aLabel} vs ${bLabel}`;
+      await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,format,participant_a_ids,participant_b_ids,description,round_number,bracket_slot,bracket_id) VALUES ($1,$2,(SELECT COALESCE(MAX(match_number),0)+1 FROM season_matches WHERE season_id=$2),$3,$4,$5,'SCHEDULED','1v1',$6::uuid[],$7::uuid[],$8,$9,$10,$11)`,[m.id,seasonId,title,aLabel,bLabel,aIds,bIds,`Automatic single-elimination bracket · Round ${m.round}`,m.round,m.slot,bracketId]);
+    }
+    for(let r=0;r<rounds.length-1;r++){
+      for(let i=0;i<rounds[r].length;i++){
+        const parent=rounds[r][i]; const next=rounds[r+1][Math.floor(i/2)];
+        await client.query(`UPDATE season_matches SET next_match_id=$1 WHERE id=$2`,[next.id,parent.id]);
+      }
+    }
+    const actor=req.admin?.accountId||req.admin?.discordId||'admin';
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_BRACKET_GENERATED',$2,$3)`,[actor,JSON.stringify({bracketId,format,playerCount:players.length,rounds:rounds.length}),seasonId]);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:rounds.length});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to generate bracket.'});}
+  finally{client.release();}
+});
+
 app.post("/api/admin/seasons/:seasonId/matches/:matchId/status", adminOrModerator, async (req,res)=>{
   const seasonId=String(req.params.seasonId||''); const matchId=String(req.params.matchId||''); const next=String(req.body?.status||'').toUpperCase();
   const winner=String(req.body?.winner||'').trim().slice(0,160);
+  const winnerSide=String(req.body?.winnerSide||'').toUpperCase();
   if(!['SCHEDULED','LIVE','COMPLETE','CANCELLED'].includes(next)) return res.status(400).json({error:'Invalid match status.'});
   const client=await pool.connect();
   try{
@@ -1864,15 +2098,20 @@ app.post("/api/admin/seasons/:seasonId/matches/:matchId/status", adminOrModerato
     const allowed=(row.status==='SCHEDULED'&&['LIVE','CANCELLED'].includes(next)) || (row.status==='LIVE'&&['COMPLETE','CANCELLED'].includes(next));
     if(!allowed) throw new Error(`Cannot change match from ${row.status} to ${next}.`);
     if(next==='LIVE' && row.season_status!=='LIVE') throw new Error('The season must be LIVE before a match can go LIVE.');
-    if(next==='COMPLETE' && !winner) throw new Error('A winner is required to complete the match.');
-    const now=next==='LIVE'?'started_at':next==='COMPLETE'?'completed_at':null;
+    if(next==='LIVE' && (!(row.participant_a_ids||[]).length || !(row.participant_b_ids||[]).length)) throw new Error('Both sides must be populated before the match can go LIVE.');
+    if(next==='COMPLETE') {
+      if(!['A','B'].includes(winnerSide)) throw new Error('Choose the winning side: A or B.');
+      if(!winner) throw new Error('A winner label is required.');
+      const result=await recordCompetitiveMatchResult(client,matchId,winnerSide,req.admin?.accountId||req.admin?.discordId||'admin');
+      await client.query('COMMIT');
+      return res.json({ok:true,competitive:true,result});
+    }
     const sets=['status=$1']; const params=[next];
     if(next==='LIVE'){sets.push('started_at=COALESCE(started_at,NOW())');}
-    if(next==='COMPLETE'){params.push(winner);sets.push(`winner=$${params.length}`,'completed_at=COALESCE(completed_at,NOW())','resolved_by=$'+(params.length+1));params.push(req.admin?.accountId||req.admin?.discordId||'admin');}
     if(next==='CANCELLED'){sets.push('completed_at=COALESCE(completed_at,NOW())');}
     params.push(matchId);
     const updated=await client.query(`UPDATE season_matches SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`,params);
-    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_MATCH_STATUS_CHANGED',$2,$3)`,[req.admin?.accountId||req.admin?.discordId||'admin',JSON.stringify({matchId,previousStatus:row.status,newStatus:next,winner:winner||null}),seasonId]);
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_MATCH_STATUS_CHANGED',$2,$3)`,[req.admin?.accountId||req.admin?.discordId||'admin',JSON.stringify({matchId,previousStatus:row.status,newStatus:next,winner:null}),seasonId]);
     await client.query('COMMIT'); res.json({ok:true,match:updated.rows[0]});
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to update season match.'});}finally{client.release();}
 });
