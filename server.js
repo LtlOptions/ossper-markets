@@ -1818,7 +1818,13 @@ app.post("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,re
   const description=String(req.body?.description||'').trim().slice(0,1000);
   const aLabel=String(req.body?.sideA||'').trim().slice(0,160);
   const bLabel=String(req.body?.sideB||'').trim().slice(0,160);
-  const scheduledAt=req.body?.scheduledAt||null;
+  const scheduledRaw=req.body?.scheduledAt;
+  let scheduledAt=null;
+  if(scheduledRaw!==null && scheduledRaw!==undefined && String(scheduledRaw).trim()!==""){
+    const parsedScheduled=new Date(String(scheduledRaw));
+    if(Number.isNaN(parsedScheduled.getTime())) return res.status(400).json({error:'Scheduled time is invalid. Please choose a valid local date and time.'});
+    scheduledAt=parsedScheduled.toISOString();
+  }
   if(!['1v1','2v2'].includes(format)) return res.status(400).json({error:'Format must be 1v1 or 2v2.'});
   const expected=format==='1v1'?1:2;
   if(aIds.length!==expected || bIds.length!==expected) return res.status(400).json({error:`${format} requires ${expected} participant${expected===1?'':'s'} on each side.`});
