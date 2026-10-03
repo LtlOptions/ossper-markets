@@ -120,3 +120,10 @@ Phase 1 Test Season API routes are wired to the existing admin UI. Season creati
 - Fixed PostgreSQL season-number allocation.
 - Replaced invalid `MAX(...) FOR UPDATE` aggregate locking with a transaction-scoped advisory lock.
 - No destructive database operations.
+
+
+## v2.1.1 — Test Season Workspace Consolidation
+- Consolidated Test Season administration into an active/current workspace plus collapsible completed/archived history.
+- Added a quick Season Workspace selector with direct Players and Matches actions, eliminating the need to scroll through the season archive.
+- Moved the player/match manager above the season history and auto-scrolls to it when opened.
+- Archived test seasons remain preserved and manageable; no database records are deleted.
