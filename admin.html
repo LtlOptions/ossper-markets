@@ -89,15 +89,15 @@ body.solidSurface select { background:var(--panel2) !important; }
 
   <section id="seasonsSection" class="section box">
     <div class="marketHead"><div><h2>Test Season / Tournament Mode</h2><div class="muted">Simulation-only competition layer. No real money, deposits, withdrawals, or prize payments.</div></div><span class="pill">SIMULATION · NO REAL MONEY</span></div>
-    <div class="notice">Phase 1 establishes the season lifecycle and isolated data model. Season trading and points wallets are intentionally not activated yet.</div>
+    <div class="notice">Phase 2 adds enrolled players and isolated OSSPER POINTS wallets. Normal Ossper balances are never changed by Test Season activity.</div>
     <div class="row">
-      <div><div class="label">Season name</div><input id="seasonName" value="Ossper Test Season #1" maxlength="120"></div>
+      <div><div class="label">Season name</div><input id="seasonName" value="Ossper Test Season #1" maxlength="120" oninput="this.dataset.edited='1'"></div>
       <div><div class="label">Starting balance</div><input id="seasonStartingBalance" type="number" min="0" max="1000000000" step="100" value="10000"><div class="hint">Points per player. Locked once registration opens.</div></div>
     </div>
     <div><div class="label">Description</div><input id="seasonDescription" maxlength="1000" placeholder="STRAFTAT tournament prediction competition"></div>
     <div class="actions" style="margin-top:10px"><button class="primary" onclick="createSeason()">Create Test Season</button><button onclick="loadSeasons()">Refresh seasons</button></div>
     <div id="seasonMsg" style="margin-top:9px"></div>
-    <div id="seasonsList" style="margin-top:14px"><div class="muted">Loading…</div></div>
+    <div id="seasonsList" style="margin-top:14px"><div class="muted">Loading…</div></div><div id="seasonPlayerManager" class="box" style="display:none;margin-top:14px"></div>
   </section>
 
   <section id="controls" class="section box">
@@ -209,7 +209,7 @@ function applyAuditFilters(){auditPage=1;loadAudit()}function clearAuditFilters(
 
 function seasonStatusClass(s){return s==='LIVE'?'green':s==='PAUSED'?'yellow':s==='COMPLETED'?'blue':s==='ARCHIVED'?'':'red'}
 function seasonActions(s){
-  const out=[];
+  const out=[`<button onclick="manageSeasonPlayers('${s.id}')">Manage players</button>`];
   if(s.status==='DRAFT') out.push(`<button class="primary" onclick="seasonStatus('${s.id}','REGISTRATION')">Open registration</button>`);
   if(s.status==='REGISTRATION') out.push(`<button class="good" onclick="seasonStatus('${s.id}','LIVE')">Start season</button>`);
   if(s.status==='LIVE') out.push(`<button onclick="seasonStatus('${s.id}','PAUSED')">Pause</button><button class="danger" onclick="seasonStatus('${s.id}','COMPLETED')">End season</button>`);
@@ -217,16 +217,35 @@ function seasonActions(s){
   if(s.status==='COMPLETED') out.push(`<button onclick="seasonStatus('${s.id}','ARCHIVED')">Archive</button>`);
   return out.join('');
 }
+async function loadSeasons(){try{const d=await api('/api/admin/seasons');const rows=Array.isArray(d)?d:[];renderSeasons(rows);setNextSeasonName(rows)}catch(e){seasonsList.innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
+function setNextSeasonName(rows){const max=rows.reduce((m,s)=>Math.max(m,Number(s.season_number)||0),0);const input=document.getElementById('seasonName');if(input&&!input.dataset.edited)input.value='Ossper Test Season #'+(max+1)}
 function renderSeasons(rows){
   if(!rows.length){seasonsList.innerHTML='<div class="muted">No Test Seasons created yet.</div>';return;}
   seasonsList.innerHTML=rows.map(s=>`<article class="market" style="margin-bottom:10px"><div class="marketHead"><div><h3>OSSPER TEST SEASON #${esc(s.season_number)} · ${esc(s.name)}</h3><div class="muted">${esc(s.description||'No description')} · Starting balance ${Number(s.starting_balance).toLocaleString()} OSSPER POINTS</div></div><span class="pill ${seasonStatusClass(s.status)}">${esc(s.status)}</span></div><div class="metrics"><div class="metric"><b>${Number(s.player_count||0)}</b><span>Players</span></div><div class="metric"><b>${Number(s.match_count||0)}</b><span>Matches</span></div><div class="metric"><b>${Number(s.market_count||0)}</b><span>Markets</span></div><div class="metric"><b>${esc(date(s.created_at))}</b><span>Created</span></div></div><div class="actions">${seasonActions(s)}</div></article>`).join('');
 }
-async function loadSeasons(){try{const d=await api('/api/admin/seasons');renderSeasons(Array.isArray(d)?d:[])}catch(e){seasonsList.innerHTML='<span class="error">'+esc(e.message)+'</span>'}}
-async function createSeason(){
-  const name=String(seasonName.value||'').trim(), description=String(seasonDescription.value||'').trim(), startingBalance=Number(seasonStartingBalance.value);
-  if(!name){seasonMsg.innerHTML='<span class="error">Season name is required.</span>';return}
-  try{await api('/api/admin/seasons',{method:'POST',body:JSON.stringify({name,description,startingBalance})});seasonMsg.innerHTML='<span class="success">Test Season created ✓</span>';seasonName.value='Ossper Test Season #'+(Date.now()%1000);seasonDescription.value='';await loadSeasons()}catch(e){seasonMsg.innerHTML='<span class="error">'+esc(e.message)+'</span>'}
+let seasonSearchTimer=null,selectedSeasonId=null,selectedSeason=null;
+async function manageSeasonPlayers(seasonId){
+  selectedSeasonId=seasonId; seasonPlayerManager.style.display='block'; seasonPlayerManager.innerHTML='<div class="muted">Loading season players…</div>';
+  try{
+    const seasons=await api('/api/admin/seasons'); const season=seasons.find(s=>s.id===seasonId); if(!season)throw Error('Season not found.'); selectedSeason=season;
+    seasonPlayerManager.innerHTML=`<div class="marketHead"><div><h3>Players · OSSPER TEST SEASON #${esc(season.season_number)}</h3><div class="muted">${esc(season.name)} · ${Number(season.starting_balance).toLocaleString()} OSSPER POINTS starting balance</div></div><button onclick="closeSeasonPlayers()">Close</button></div><div class="notice">Enrollment is isolated from normal Ossper balances. Adding a player creates a season wallet only; their regular account balance is untouched.</div><div class="row"><div><div class="label">Find tester</div><input id="seasonPlayerSearch" placeholder="Display name or Discord ID" oninput="debouncedSeasonPlayerSearch()"></div><div><div class="label">Wallet model</div><div class="hint" style="padding-top:9px">Available = season points minus locked points. Locked points will activate when season trading is connected.</div></div></div><div id="seasonSearchResults" style="margin-top:10px"></div><div id="seasonPlayersTable" style="margin-top:14px"></div>`;
+    await loadSeasonPlayers();
+  }catch(e){seasonPlayerManager.innerHTML='<span class="error">'+esc(e.message)+'</span>'}
 }
+function closeSeasonPlayers(){seasonPlayerManager.style.display='none';selectedSeasonId=null;selectedSeason=null}
+function debouncedSeasonPlayerSearch(){clearTimeout(seasonSearchTimer);seasonSearchTimer=setTimeout(searchSeasonAccounts,250)}
+async function searchSeasonAccounts(){
+  const input=document.getElementById('seasonPlayerSearch'),root=document.getElementById('seasonSearchResults'); if(!input||!root||!selectedSeasonId)return; const q=String(input.value||'').trim(); if(q.length<2){root.innerHTML='';return;} root.innerHTML='<div class="muted">Searching…</div>';
+  try{const rows=await api('/api/admin/season-accounts/search?seasonId='+encodeURIComponent(selectedSeasonId)+'&q='+encodeURIComponent(q)); root.innerHTML=rows.length?rows.map(a=>`<div class="roleRow" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:10px;margin-top:6px"><div><b>${esc(a.display_name||'Unnamed Discord user')}</b><div class="hint">${esc(a.discord_id||'Guest account')}</div></div>${a.enrolled?'<span class="pill green">ENROLLED</span>':`<button class="primary" onclick="enrollSeasonPlayer('${a.id}')">Add player</button>`}</div>`).join(''):'<div class="muted">No matching accounts.</div>'}catch(e){root.innerHTML='<span class="error">'+esc(e.message)+'</span>'}
+}
+async function enrollSeasonPlayer(accountId){try{await api('/api/admin/seasons/'+encodeURIComponent(selectedSeasonId)+'/players',{method:'POST',body:JSON.stringify({accountId})});const input=document.getElementById('seasonPlayerSearch');if(input)input.value='';document.getElementById('seasonSearchResults').innerHTML='<span class="success">Player enrolled ✓</span>';await loadSeasonPlayers();await loadSeasons()}catch(e){alert(e.message)}}
+async function loadSeasonPlayers(){
+  if(!selectedSeasonId)return; const root=document.getElementById('seasonPlayersTable'); if(!root)return; root.innerHTML='<div class="muted">Loading players…</div>';
+  try{const rows=await api('/api/admin/seasons/'+encodeURIComponent(selectedSeasonId)+'/players'); if(!rows.length){root.innerHTML='<div class="muted">No players enrolled yet.</div>';return;}
+    root.innerHTML=`<div class="positionTable"><div class="positionRow positionHead"><span>Player</span><span>Status</span><span>Points</span><span>Available</span><span>Locked</span><span>Stats</span><span>Action</span></div>${rows.map(p=>{const points=Number(p.current_balance||0),locked=Number(p.locked_balance||0),avail=Math.max(0,points-locked),acc=Number(p.accuracy||0);let action='';if(p.status==='ACTIVE'&&['DRAFT','REGISTRATION'].includes(selectedSeason?.status||''))action=`<button class="danger" onclick="seasonPlayerStatus('${p.id}','REMOVED')">Remove</button>`;else if(p.status==='ACTIVE'&&['LIVE','PAUSED'].includes(selectedSeason?.status||''))action=`<button class="danger" onclick="seasonPlayerStatus('${p.id}','SUSPENDED')">Suspend</button>`;else if(p.status==='SUSPENDED')action=`<button class="good" onclick="seasonPlayerStatus('${p.id}','ACTIVE')">Restore</button>`;else if(p.status==='REMOVED'&&['DRAFT','REGISTRATION'].includes(selectedSeason?.status||''))action=`<button class="good" onclick="seasonPlayerStatus('${p.id}','ACTIVE')">Re-enroll</button>`;return `<div class="positionRow"><span><b>${esc(p.display_name||'Unnamed')}</b><small style="display:block;color:var(--muted)">${esc(p.discord_id||'Guest')}</small></span><span><span class="pill ${p.status==='ACTIVE'?'green':p.status==='SUSPENDED'?'yellow':''}">${esc(p.status)}</span></span><span>${points.toLocaleString()} PTS</span><span>${avail.toLocaleString()} PTS</span><span>${locked.toLocaleString()} PTS</span><span>${Number(p.predictions||0)} picks · ${acc.toFixed(1)}% acc.</span><span>${action}</span></div>`}).join('')}</div>`;
+  }catch(e){root.innerHTML='<span class="error">'+esc(e.message)+'</span>'}
+}
+async function seasonPlayerStatus(playerId,status){try{await api('/api/admin/seasons/'+encodeURIComponent(selectedSeasonId)+'/players/'+encodeURIComponent(playerId)+'/status',{method:'POST',body:JSON.stringify({status})});await loadSeasonPlayers();await loadSeasons()}catch(e){alert(e.message)}}
 async function seasonStatus(id,status){
   const labels={REGISTRATION:'open registration',LIVE:'start this season',PAUSED:'pause this season',COMPLETED:'end this season',ARCHIVED:'archive this season'};
   if(!confirm(`Are you sure you want to ${labels[status]||status}?`))return;

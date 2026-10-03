@@ -349,6 +349,12 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS season_players_season_idx ON season_players(season_id, status);
     CREATE INDEX IF NOT EXISTS season_players_account_idx ON season_players(account_id, joined_at DESC);
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS locked_balance NUMERIC(18,4) NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS realized_pnl NUMERIC(18,4) NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS total_wagered NUMERIC(18,4) NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS total_winnings NUMERIC(18,4) NOT NULL DEFAULT 0;
+    ALTER TABLE season_players ADD COLUMN IF NOT EXISTS total_losses NUMERIC(18,4) NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS season_players_status_idx ON season_players(season_id, status, joined_at DESC);
 
     CREATE TABLE IF NOT EXISTS season_wallet_entries (
       id BIGSERIAL PRIMARY KEY,
@@ -1627,6 +1633,189 @@ app.post("/api/admin/seasons/:id/status", adminOrOwner, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+app.get("/api/admin/season-accounts/search", adminOrOwner, async (req, res) => {
+  const qText = String(req.query?.q || "").trim();
+  const seasonId = String(req.query?.seasonId || "").trim();
+  if (!seasonId) return res.status(400).json({ error: "Season ID is required." });
+  if (!qText || qText.length < 2) return res.json([]);
+  try {
+    const like = `%${qText}%`;
+    const q = await pool.query(`
+      SELECT a.id, a.discord_id, a.display_name, a.avatar_url,
+             EXISTS(
+               SELECT 1 FROM season_players sp
+               WHERE sp.season_id=$2 AND sp.account_id=a.id AND sp.status='ACTIVE'
+             ) AS enrolled,
+             EXISTS(
+               SELECT 1 FROM season_players sp
+               WHERE sp.season_id=$2 AND sp.account_id=a.id AND sp.status='REMOVED'
+             ) AS previously_enrolled
+      FROM accounts a
+      WHERE (a.display_name ILIKE $1 OR a.discord_id ILIKE $1)
+      ORDER BY LOWER(COALESCE(a.display_name,'')), a.discord_id
+      LIMIT 20
+    `, [like, seasonId]);
+    res.set("Cache-Control", "no-store");
+    res.json(q.rows);
+  } catch (e) {
+    console.error("GET /api/admin/season-accounts/search", e);
+    res.status(500).json({ error: "Unable to search Ossper accounts." });
+  }
+});
+
+app.get("/api/admin/seasons/:id/players", adminOrOwner, async (req, res) => {
+  const seasonId = String(req.params.id || "");
+  try {
+    const q = await pool.query(`
+      SELECT sp.*, a.display_name, a.discord_id, a.avatar_url,
+             COALESCE(ss.predictions,0)::int AS predictions,
+             COALESCE(ss.correct_predictions,0)::int AS correct_predictions,
+             COALESCE(ss.incorrect_predictions,0)::int AS incorrect_predictions,
+             COALESCE(ss.points_won,0) AS points_won,
+             COALESCE(ss.points_lost,0) AS points_lost,
+             COALESCE(ss.roi,0) AS roi,
+             COALESCE(ss.accuracy,0) AS accuracy,
+             ss.current_rank
+      FROM season_players sp
+      JOIN accounts a ON a.id=sp.account_id
+      LEFT JOIN season_stats ss ON ss.season_id=sp.season_id AND ss.account_id=sp.account_id
+      WHERE sp.season_id=$1
+      ORDER BY CASE sp.status WHEN 'ACTIVE' THEN 0 WHEN 'SUSPENDED' THEN 1 ELSE 2 END,
+               LOWER(COALESCE(a.display_name,'')), a.discord_id
+    `, [seasonId]);
+    res.set("Cache-Control", "no-store");
+    res.json(q.rows);
+  } catch (e) {
+    console.error("GET /api/admin/seasons/:id/players", e);
+    res.status(500).json({ error: "Unable to load season players." });
+  }
+});
+
+app.post("/api/admin/seasons/:id/players", adminOrOwner, async (req, res) => {
+  const seasonId = String(req.params.id || "");
+  const accountId = String(req.body?.accountId || "");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(accountId)) {
+    return res.status(400).json({ error: "A valid Ossper account is required." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sq = await client.query("SELECT * FROM seasons WHERE id=$1 FOR UPDATE", [seasonId]);
+    if (!sq.rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Test Season not found." }); }
+    const season = sq.rows[0];
+    if (!["DRAFT","REGISTRATION"].includes(season.status)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Players can only be enrolled while the season is in DRAFT or REGISTRATION." });
+    }
+    const aq = await client.query("SELECT id,display_name,discord_id FROM accounts WHERE id=$1", [accountId]);
+    if (!aq.rows.length) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Ossper account not found." }); }
+    const existing = await client.query("SELECT * FROM season_players WHERE season_id=$1 AND account_id=$2 FOR UPDATE", [seasonId,accountId]);
+    const actor = req.admin?.discordId || req.admin?.accountId || "admin";
+    const starting = Number(season.starting_balance);
+    let player;
+    if (existing.rows.length) {
+      const old = existing.rows[0];
+      if (old.status === "ACTIVE") { await client.query("ROLLBACK"); return res.status(409).json({ error: "That player is already enrolled in this season." }); }
+      if (old.status !== "REMOVED") { await client.query("ROLLBACK"); return res.status(409).json({ error: "That player cannot be re-enrolled from its current status." }); }
+      const upd = await client.query(`
+        UPDATE season_players
+        SET status='ACTIVE', starting_balance=$1, current_balance=$1, locked_balance=0,
+            realized_pnl=0, total_wagered=0, total_winnings=0, total_losses=0,
+            joined_at=NOW(), final_rank=NULL, final_points=NULL
+        WHERE id=$2 RETURNING *
+      `, [starting, old.id]);
+      player = upd.rows[0];
+      await client.query(`
+        INSERT INTO season_wallet_entries
+          (season_id,account_id,type,amount,balance_after,reference_type,reference_id)
+        VALUES ($1,$2,'SEASON_REENROLLED',$3,$3,'SEASON_PLAYER',$4)
+      `, [seasonId,accountId,starting,String(player.id)]);
+      await client.query("UPDATE season_stats SET predictions=0,correct_predictions=0,incorrect_predictions=0,points_won=0,points_lost=0,roi=0,accuracy=0,current_rank=NULL WHERE season_id=$1 AND account_id=$2",[seasonId,accountId]);
+    } else {
+      const id=crypto.randomUUID();
+      const ins=await client.query(`
+        INSERT INTO season_players
+          (id,season_id,account_id,starting_balance,current_balance,locked_balance,status)
+        VALUES ($1,$2,$3,$4,$4,0,'ACTIVE') RETURNING *
+      `,[id,seasonId,accountId,starting]);
+      player=ins.rows[0];
+      await client.query(`
+        INSERT INTO season_wallet_entries
+          (season_id,account_id,type,amount,balance_after,reference_type,reference_id)
+        VALUES ($1,$2,'SEASON_INITIAL_BALANCE',$3,$3,'SEASON_PLAYER',$4)
+      `,[seasonId,accountId,starting,id]);
+      await client.query(`
+        INSERT INTO season_stats (id,season_id,account_id)
+        VALUES ($1,$2,$3) ON CONFLICT (season_id,account_id) DO NOTHING
+      `,[crypto.randomUUID(),seasonId,accountId]);
+    }
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_PLAYER_ENROLLED',$2,$3)`,[actor,JSON.stringify({accountId,displayName:aq.rows[0].display_name||null,discordId:aq.rows[0].discord_id||null,startingBalance:starting,reEnrolled:Boolean(existing.rows.length)}),seasonId]);
+    await client.query("COMMIT");
+    res.status(201).json({ok:true,player});
+  } catch(e) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/admin/seasons/:id/players",e);
+    res.status(400).json({error:e.message||"Unable to enroll player."});
+  } finally { client.release(); }
+});
+
+app.post("/api/admin/seasons/:seasonId/players/:playerId/status", adminOrOwner, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||"");
+  const playerId=String(req.params.playerId||"");
+  const next=String(req.body?.status||"").toUpperCase();
+  if(!["ACTIVE","SUSPENDED","REMOVED"].includes(next)) return res.status(400).json({error:"Invalid player status."});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const q=await client.query("SELECT sp.*,s.status AS season_status FROM season_players sp JOIN seasons s ON s.id=sp.season_id WHERE sp.id=$1 AND sp.season_id=$2 FOR UPDATE",[playerId,seasonId]);
+    if(!q.rows.length){await client.query("ROLLBACK");return res.status(404).json({error:"Season player not found."});}
+    const row=q.rows[0];
+    if(next==='REMOVED' && !['DRAFT','REGISTRATION'].includes(row.season_status)) {await client.query("ROLLBACK");return res.status(409).json({error:"Players can only be removed before the season starts."});}
+    if(next==='SUSPENDED' && !['LIVE','PAUSED'].includes(row.season_status)) {await client.query("ROLLBACK");return res.status(409).json({error:"Players can only be suspended during a live or paused season."});}
+    if(next==='ACTIVE' && row.status==='REMOVED' && !['DRAFT','REGISTRATION'].includes(row.season_status)) {await client.query("ROLLBACK");return res.status(409).json({error:"A removed player can only be restored before the season starts."});}
+    if(next==='ACTIVE' && row.status==='SUSPENDED' && !['LIVE','PAUSED'].includes(row.season_status)) {await client.query("ROLLBACK");return res.status(409).json({error:"A suspended player can only be restored while the season is live or paused."});}
+    const updated=await client.query("UPDATE season_players SET status=$1 WHERE id=$2 RETURNING *",[next,playerId]);
+    const actor=req.admin?.discordId||req.admin?.accountId||'admin';
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_PLAYER_STATUS_CHANGED',$2,$3)`,[actor,JSON.stringify({playerId,accountId:row.account_id,previousStatus:row.status,newStatus:next}),seasonId]);
+    await client.query("COMMIT");
+    res.json({ok:true,player:updated.rows[0]});
+  }catch(e){await client.query("ROLLBACK");console.error("POST /api/admin/seasons/:seasonId/players/:playerId/status",e);res.status(400).json({error:e.message||"Unable to update player status."});}
+  finally{client.release();}
+});
+
+app.get("/api/season/me", async (req,res)=>{
+  const accountId=await requestAccountId(req);
+  if(!accountId) return res.json({enrolled:false,season:null,player:null});
+  try{
+    const q=await pool.query(`
+      SELECT s.id AS season_id,s.season_number,s.name,s.description,s.status,s.starting_balance,
+             s.registration_open_at,s.started_at,s.ended_at,
+             sp.id AS player_id,sp.status AS player_status,sp.starting_balance AS player_starting_balance,
+             sp.current_balance,sp.locked_balance,sp.realized_pnl,sp.total_wagered,sp.total_winnings,sp.total_losses,
+             COALESCE(ss.predictions,0)::int AS predictions,
+             COALESCE(ss.correct_predictions,0)::int AS correct_predictions,
+             COALESCE(ss.incorrect_predictions,0)::int AS incorrect_predictions,
+             COALESCE(ss.roi,0) AS roi,COALESCE(ss.accuracy,0) AS accuracy,ss.current_rank
+      FROM season_players sp
+      JOIN seasons s ON s.id=sp.season_id
+      LEFT JOIN season_stats ss ON ss.season_id=sp.season_id AND ss.account_id=sp.account_id
+      WHERE sp.account_id=$1 AND s.status IN ('REGISTRATION','LIVE','PAUSED') AND sp.status IN ('ACTIVE','SUSPENDED')
+      ORDER BY CASE s.status WHEN 'LIVE' THEN 0 WHEN 'PAUSED' THEN 1 ELSE 2 END,s.started_at DESC NULLS LAST,s.created_at DESC
+      LIMIT 1
+    `,[accountId]);
+    res.set("Cache-Control","no-store");
+    if(!q.rows.length) return res.json({enrolled:false,season:null,player:null});
+    const r=q.rows[0];
+    const totalPoints=Number(r.current_balance||0);
+    const locked=Number(r.locked_balance||0);
+    res.json({
+      enrolled:true,
+      season:{id:r.season_id,seasonNumber:r.season_number,name:r.name,description:r.description,status:r.status,startingBalance:Number(r.starting_balance),registrationOpenAt:r.registration_open_at,startedAt:r.started_at,endedAt:r.ended_at},
+      player:{id:r.player_id,status:r.player_status,startingBalance:Number(r.player_starting_balance),currentPoints:totalPoints,availablePoints:Math.max(0,totalPoints-locked),lockedPoints:locked,realizedPnl:Number(r.realized_pnl||0),totalWagered:Number(r.total_wagered||0),totalWinnings:Number(r.total_winnings||0),totalLosses:Number(r.total_losses||0),predictions:Number(r.predictions||0),correctPredictions:Number(r.correct_predictions||0),incorrectPredictions:Number(r.incorrect_predictions||0),accuracy:Number(r.accuracy||0),roi:Number(r.roi||0),rank:r.current_rank||null}
+    });
+  }catch(e){console.error("GET /api/season/me",e);res.status(500).json({error:"Unable to load your Test Season wallet."});}
 });
 
 app.get("/api/admin/markets", adminOnly, async (_req, res) => {
