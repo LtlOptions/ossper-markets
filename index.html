@@ -193,6 +193,26 @@ body.solidSurfaces .modal{
   }
 }
 @media(max-width:850px){.tournamentGrid{grid-template-columns:1fr}.tournamentToolbar{align-items:flex-start;flex-direction:column}.tournamentSummaryGrid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.tournamentStats{grid-template-columns:repeat(2,1fr)}.tournamentCard{min-height:0}.tournamentCardHead h3{font-size:17px}.tournamentSummaryGrid{grid-template-columns:1fr 1fr}.tournamentMatchRow{padding:11px}.tournamentModal{padding:15px;max-height:calc(100vh - 24px)}}
+/* v2.2.2 guided-help / dropdown polish */
+.settingsDropdown{z-index:90}
+.settingsDropdown .menu{z-index:95}
+.notificationDropdown{z-index:60}
+/* Notification panels are intentionally click-open only. This removes the old invisible hover bridge/hitbox. */
+.notificationDropdown:after{display:none!important}
+.notificationDropdown:hover .notificationPanel{opacity:0!important;visibility:hidden!important;pointer-events:none!important;transform:translate(-50%,4px)!important}
+.notificationDropdown.open .notificationPanel{opacity:1!important;visibility:visible!important;pointer-events:auto!important;transform:translate(-50%,0)!important}
+.accountArea{z-index:85}
+.accountMenu{z-index:100}
+#modalBack{z-index:220}
+.guideReturn{position:fixed;top:78px;left:50%;transform:translateX(-50%);z-index:72;display:none;align-items:center;gap:7px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--accent2) 65%,var(--line2));border-radius:999px;background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:blur(16px);box-shadow:0 12px 32px rgba(0,0,0,.24);color:var(--text);font-size:10px;font-weight:900;letter-spacing:.03em;cursor:pointer}
+.guideReturn:hover{border-color:var(--accent2);background:color-mix(in srgb,var(--accent) 12%,var(--panel));transform:translateX(-50%) translateY(-1px)}
+.demoCoachCursor{position:fixed;z-index:260;width:30px;height:38px;display:none;pointer-events:none;filter:drop-shadow(0 4px 8px rgba(0,0,0,.45));transition:left .72s cubic-bezier(.22,.8,.25,1),top .72s cubic-bezier(.22,.8,.25,1),transform .16s ease}
+.demoCoachCursor.clicking{transform:scale(.82)}
+.demoCoachCursor svg{display:block;width:100%;height:100%}
+.demoCoachBanner{margin:0 0 10px;padding:9px 11px;border:1px solid color-mix(in srgb,var(--accent2) 62%,var(--line2));border-radius:9px;background:color-mix(in srgb,var(--accent) 8%,var(--panel));color:var(--soft);font-size:10px;line-height:1.45}
+.demoCoachBanner b{color:var(--text)}
+@media(max-width:850px){.guideReturn{top:72px;max-width:calc(100vw - 28px);white-space:nowrap}.settingsDropdown{z-index:90}.notificationDropdown{z-index:60}}
+
 /* v2.2.1 interactive How It Works / guided help pass */
 .helpIntro{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:16px;padding:16px 18px;border:1px solid color-mix(in srgb,var(--line2) 78%,transparent);border-radius:13px;background:color-mix(in srgb,var(--panel) 48%,transparent);backdrop-filter:blur(14px)}
 .helpIntro h1{margin:0 0 5px}.helpIntro p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}.helpDemoBtn{border:1px solid var(--accent2);background:color-mix(in srgb,var(--accent) 14%,var(--panel2));color:var(--text);border-radius:9px;padding:10px 13px;font-size:11px;font-weight:900;white-space:nowrap}.helpDemoBtn:hover{background:color-mix(in srgb,var(--accent) 22%,var(--panel2));transform:translateY(-1px)}
@@ -212,6 +232,7 @@ body.solidSurfaces .modal{
   <div class="navright"><div class="mobileNavWrap"><button class="mobileNavBtn" onclick="toggleMobileNav(event)" aria-label="Open navigation">☰</button><div class="mobileNavMenu" id="mobileNavMenu"><div class="mobileNavTitle">Ossper</div><button data-mobile-nav="home" onclick="go('home');closeMobileNav()">Home</button><button data-mobile-nav="markets" onclick="go('markets');closeMobileNav()">Markets</button><button data-mobile-nav="tournaments" onclick="go('tournaments');closeMobileNav()">Tournaments</button><button data-mobile-nav="wagers" onclick="go('wagers');closeMobileNav()">Wagers</button><button data-mobile-nav="activity" onclick="go('activity');closeMobileNav()">Activity</button><button data-mobile-nav="portfolio" onclick="go('portfolio');closeMobileNav()">Portfolio</button><button data-mobile-nav="season" onclick="go('season');closeMobileNav()">Test Season</button><div class="mobileNavDivider"></div><button data-mobile-nav="settings" onclick="go('settings');closeMobileNav()">Settings</button><a href="/admin" onclick="rememberAppLocation();closeMobileNav()">Admin</a><button onclick="go('help');closeMobileNav()">Help & How it works</button><button onclick="go('about');closeMobileNav()">About Ossper</button></div></div><div class="notificationDropdown" id="notificationDropdown"><button id="notificationBtn" class="notificationBtn" onclick="toggleNotifications(event)" aria-label="Notifications" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span id="notificationBadge" class="notificationBadge" style="display:none">0</span></button><div class="notificationPanel" id="notificationPanel"><div class="notificationHead"><b>Notifications</b><button class="option" style="padding:5px 7px" onclick="markAllNotificationsRead()">Mark all read</button></div><div id="notificationList"></div></div></div><div class="seasonSimBadge" id="seasonSimBadge" aria-label="Simulation mode"><span class="simBadgeMark">TEST</span><span class="simBadgeCopy"><b>SIMULATION</b><small>NO REAL MONEY</small></span></div><div class="liveIndicator" id="liveIndicator"><span></span> LIVE</div><div class="balanceMini">Balance <b id="miniBalance">$500.00</b></div><div class="accountArea" id="accountArea"><button class="accountBtn" id="accountBtn" onclick="toggleAccountMenu()">Guest</button><div class="menu accountMenu" id="accountMenu" style="display:none"><div id="accountMenuBody"></div></div></div></div>
 </nav></header>
 <div id="freezeBanner" class="freezeBanner" style="display:none"><b>Trading paused</b><span id="freezeReason">Ossper is temporarily frozen by administration.</span></div>
+<button id="guideReturn" class="guideReturn" type="button" onclick="returnToGuide()">← Back to How It Works</button>
 <main id="dashboard">
   <section class="view active" data-view="home" id="view-home">
     <div class="homeHero">
@@ -266,7 +287,7 @@ body.solidSurfaces .modal{
   <section class="view" data-view="about" id="view-about"><div class="viewTitle"><h1>About Ossper</h1><p>Community prediction markets for tournament events.</p></div><div class="aboutBox">Ossper is currently a virtual-money community product. Balances, trades, positions, pricing, settlement, and administrative actions are stored server-side. Real-money functionality is not enabled.</div></section>
 </main>
 <div id="modalBack" class="modalBack"><div class="modal"><h3 id="modalTitle">Buy YES</h3><p id="modalSub">Enter a contract quantity.</p><input id="qty" type="number" min="1" max="10000" step="1" value="10"><div id="quote" class="quote">Enter a quantity to preview the trade.</div><div class="modalActions"><button onclick="closeModal()">Cancel</button><button class="primary" id="confirmBtn" onclick="confirmTrade()">Confirm</button></div></div></div><div id="wagerHubBack" class="modalBack"><div class="modal wagerHubModal"><div class="modalHead"><div><h3>Create a wager</h3><p>Choose how you want to put virtual money to work.</p></div><button class="modalClose" onclick="closeWagerHub()">Close</button></div><div class="wagerChoiceGrid"><button class="wagerChoice" onclick="openWagerFromHub()"><span class="wagerChoiceIcon">⚔</span><span><b>Challenge a player</b><small>Pick an opponent, a market, a side, and a stake.</small></span><span>→</span></button><button class="wagerChoice" onclick="openMarketTradeFromHub()"><span class="wagerChoiceIcon">◈</span><span><b>Wager on a market</b><small>Choose an existing market and trade YES or NO.</small></span><span>→</span></button></div></div></div><div id="marketWagerChoiceBack" class="modalBack"><div class="modal wagerHubModal"><div class="modalHead"><div><h3>Wager on a market</h3><p>Pick a live market and choose YES or NO.</p></div><button class="modalClose" onclick="closeMarketWagerChoices()">Close</button></div><div id="marketWagerChoiceList" class="wagerChoiceGrid"></div></div></div><div id="wagerModalBack" class="modalBack"><div class="modal"><div class="modalHead"><div><h3 id="wagerModalTitle">Create wager</h3><p id="wagerModalSub">Challenge another tester.</p></div><button class="modalClose" onclick="closeWagerModal()">Close</button></div><div class="wagerFormGrid"><div class="full"><label>Market</label><select id="wagerMarketSelect"></select></div><div class="full"><label>Opponent</label><div class="wagerSearch"><input id="wagerOpponentSearch" autocomplete="off" placeholder="Search Discord name…"><div id="wagerOpponentResults" class="wagerSearchResults"></div></div><div id="selectedOpponent" class="selectedOpponent" style="display:none"></div></div><div><label>Your side</label><select id="wagerSide"><option value="YES">YES</option><option value="NO">NO</option></select></div><div><label>Stake</label><input id="wagerAmount" type="number" min="1" max="100000" step="1" value="25"></div></div><div id="wagerHint" class="wagerHint"></div><div class="modalActions" style="margin-top:14px"><button onclick="closeWagerModal()">Cancel</button><button class="primary" onclick="submitWager()">Send wager</button></div></div></div><div id="chartModalBack" class="modalBack"><div class="modal" style="width:min(720px,100%)"><div class="modalHead"><div><h3 id="chartTitle">Market chart</h3><p id="chartSub">YES probability over time.</p></div><button class="modalClose" onclick="closeChartModal()">Close</button></div><div id="chartBody" class="chartWrap"><div class="chartEmpty">Loading chart…</div></div></div></div>
-<div id="howDemoBack" class="modalBack" style="display:none"><div class="modal demoModal"><div class="modalHead"><div><div class="eyebrow">INTERACTIVE DEMO</div><h3>Try a market without leaving the guide</h3><p>Use the live demo market to see prices, YES/NO actions, quotes, and the trading confirmation flow. Everything here uses Ossper's existing virtual-money system.</p></div><button class="modalClose" onclick="closeHowItWorksDemo()">Close</button></div><div id="howDemoBody"></div></div></div><div id="guideSpotlight" class="guideSpotlight" aria-hidden="true"></div><div id="guideCallout" class="guideCallout" role="status" aria-live="polite"><b id="guideCalloutTitle">Try it</b><p id="guideCalloutText"></p><button onclick="finishGuide()">Done</button></div>
+<div id="howDemoBack" class="modalBack" style="display:none"><div class="modal demoModal"><div class="modalHead"><div><div class="eyebrow">INTERACTIVE DEMO</div><h3>Try a market without leaving the guide</h3><p>Use the live demo market to see prices, YES/NO actions, quotes, and the trading confirmation flow. Everything here uses Ossper's existing virtual-money system.</p></div><button class="modalClose" onclick="closeHowItWorksDemo()">Close</button></div><div id="howDemoBody"></div></div></div><div id="demoCoachCursor" class="demoCoachCursor" aria-hidden="true"><svg viewBox="0 0 30 38" fill="none"><path d="M3 2.5L25.8 20.1L16.6 21.4L21.5 32.1L16.5 34.3L11.7 23.3L5.3 30.2L3 2.5Z" fill="white" stroke="#111827" stroke-width="1.7" stroke-linejoin="round"/></svg></div><div id="guideSpotlight" class="guideSpotlight" aria-hidden="true"></div><div id="guideCallout" class="guideCallout" role="status" aria-live="polite"><b id="guideCalloutTitle">Try it</b><p id="guideCalloutText"></p><button onclick="finishGuide()">Done</button></div>
 <script>
 const KEY="ossper_account_id", PREF="ossper_preferences_v12";let accountId=localStorage.getItem(KEY);let state=[];let wagers=[];let pending=null;let wagerDraft={marketId:null,side:"YES",opponentId:null,opponentName:""};let systemFrozen=false;let me={authenticated:false,account:null};let discordEnabled=false;
 const defaults={theme:"midnight",accent:"blue",surface:"glass",marketLayout:"two",compact:false,liveUpdates:true,confirmTrades:true,reducedMotion:false,timeFormat:"12",order:["portfolio","markets","tournaments","activity"],background:"",notifications:true,browserNotifications:false};
@@ -316,7 +337,7 @@ function applyOrder(){const host=document.getElementById("marketsSections");if(!
 function toggleMobileNav(e){if(e)e.stopPropagation();const m=document.getElementById("mobileNavMenu");if(m)m.classList.toggle("open")}
 function closeMobileNav(){const m=document.getElementById("mobileNavMenu");if(m)m.classList.remove("open")}
 document.addEventListener("click",e=>{if(!e.target.closest(".mobileNavWrap"))closeMobileNav();if(!e.target.closest("#notificationDropdown"))closeNotifications();if(!e.target.closest("#accountArea")){const m=document.getElementById("accountMenu");if(m)m.style.display="none"}});
-function go(view){closeMobileNav();closeNotifications();const accountMenu=document.getElementById("accountMenu");if(accountMenu)accountMenu.style.display="none";document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.dataset.view===view));document.querySelectorAll("[data-nav]").forEach(b=>b.classList.toggle("active",b.dataset.nav===view));document.querySelectorAll("[data-mobile-nav]").forEach(b=>b.classList.toggle("active",b.dataset.mobileNav===view));if(location.hash!=="#"+view)history.replaceState(null,"","#"+view);window.scrollTo({top:0,behavior:"smooth"});if(view==="portfolio"){renderPortfolio();loadPortfolioChart()}if(view==="activity")renderActivityFull();if(view==="tournaments")renderTournamentsFull();if(view==="wagers")renderWagers();if(view==="home")renderHome();if(view==="settings"){renderLayoutList();renderAccount()}if(view==="season")loadSeasonMe();if(view==="help")loadNotifications()}
+function go(view){closeMobileNav();closeNotifications();const accountMenu=document.getElementById("accountMenu");if(accountMenu)accountMenu.style.display="none";if(view==="help"){try{sessionStorage.removeItem('ossper_help_return')}catch{};hideGuideReturn()}else{try{if(sessionStorage.getItem('ossper_help_return')==='1')showGuideReturn()}catch{}}document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.dataset.view===view));document.querySelectorAll("[data-nav]").forEach(b=>b.classList.toggle("active",b.dataset.nav===view));document.querySelectorAll("[data-mobile-nav]").forEach(b=>b.classList.toggle("active",b.dataset.mobileNav===view));if(location.hash!=="#"+view)history.replaceState(null,"","#"+view);window.scrollTo({top:0,behavior:"smooth"});if(view==="portfolio"){renderPortfolio();loadPortfolioChart()}if(view==="activity")renderActivityFull();if(view==="tournaments")renderTournamentsFull();if(view==="wagers")renderWagers();if(view==="home")renderHome();if(view==="settings"){renderLayoutList();renderAccount()}if(view==="season")loadSeasonMe();if(view==="help")loadNotifications()}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 function money(v){return "$"+Number(v||0).toFixed(2)}function prob(v){return "$"+Number(v||0).toFixed(3)}function localDate(v,opts={}){return new Date(v).toLocaleString([], {...opts,hour12:prefs.timeFormat!=="24"})}function localTime(v,opts={}){return new Date(v).toLocaleTimeString([], {...opts,hour12:prefs.timeFormat!=="24"})}
 function seasonDateMeta(s){const parts=[];if(s?.status==='LIVE'&&s?.startedAt)parts.push('<span><b>Live since</b> '+esc(localDate(s.startedAt,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}))+'</span>');else if(s?.registrationOpenAt)parts.push('<span><b>Registration opened</b> '+esc(localDate(s.registrationOpenAt,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}))+'</span>');if(s?.createdAt)parts.push('<span><b>Created</b> '+esc(localDate(s.createdAt,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}))+'</span>');return parts.length?'<div class="seasonDateMeta">'+parts.join('')+'</div>':''}
@@ -352,17 +373,65 @@ function renderTournamentGroups(items,targetId,filter='ALL'){const el=document.g
 function renderTournamentsFull(){renderTournamentGroups(state,'tournamentFull',tournamentViewFilter)}
 function isDemoMarketSnapshot(s){const m=s&&s.market;if(!m)return false;return !m.match_id&&/demo|initial ossper test market/i.test(String(m.description||''))}
 function publicMarketState(){return state.filter(s=>!isDemoMarketSnapshot(s))}
+let demoCoachTimer=null;
 function openHowItWorksDemo(){
   const demo=state.find(isDemoMarketSnapshot);
   const back=document.getElementById('howDemoBack'),body=document.getElementById('howDemoBody');
   if(!back||!body)return;
+  clearTimeout(demoCoachTimer);
+  const cursor=document.getElementById('demoCoachCursor');if(cursor)cursor.style.display='none';
   if(!demo){body.innerHTML='<div class="demoUnavailable">The interactive demo market is not currently published. An admin can publish the demo market when you want to run the walkthrough.</div>';back.style.display='flex';return;}
-  body.innerHTML='<div class="demoIntro"><b>What you are looking at:</b> this is a real Ossper market interface backed by the normal virtual-money trading flow. Try the buttons, open the quote, and cancel or confirm when you are ready.</div>'+card(demo);
+  body.innerHTML='<div class="demoCoachBanner" id="demoCoachBanner"><b>Watch once, then try it yourself.</b> We'll show the normal BUY → quote flow with a cursor. No trade is submitted during the walkthrough.</div><div class="demoIntro"><b>What you are looking at:</b> this is a real Ossper market interface backed by the normal virtual-money trading flow. After the short walkthrough, the controls are yours to use.</div>'+card(demo);
   back.style.display='flex';
+  demoCoachTimer=setTimeout(()=>startDemoCoach(demo.market.id),220);
 }
-function closeHowItWorksDemo(){const back=document.getElementById('howDemoBack');if(back)back.style.display='none'}
+function closeHowItWorksDemo(){
+  clearTimeout(demoCoachTimer);
+  const back=document.getElementById('howDemoBack');if(back)back.style.display='none';
+  const cursor=document.getElementById('demoCoachCursor');if(cursor)cursor.style.display='none';
+}
+function demoCursorTo(el,click=false){
+  const cursor=document.getElementById('demoCoachCursor');if(!cursor||!el)return;
+  const r=el.getBoundingClientRect();
+  cursor.style.left=Math.max(4,r.left+r.width*.55)+'px';
+  cursor.style.top=Math.max(4,r.top+r.height*.55)+'px';
+  cursor.classList.toggle('clicking',false);
+  if(click)setTimeout(()=>{cursor.classList.add('clicking');setTimeout(()=>cursor.classList.remove('clicking'),180)},720);
+}
+function startDemoCoach(marketId){
+  const cursor=document.getElementById('demoCoachCursor'),banner=document.getElementById('demoCoachBanner'),buy=document.querySelector(`#market-${marketId} .side.yes button`);
+  if(!cursor||!buy)return;
+  cursor.style.display='block';
+  banner.innerHTML='<b>Step 1 · Buy YES</b> Watch the cursor move to the BUY button. This is only a visual walkthrough.';
+  demoCursorTo(buy,false);
+  demoCoachTimer=setTimeout(()=>{
+    demoCursorTo(buy,true);
+    demoCoachTimer=setTimeout(()=>{
+      banner.innerHTML='<b>Step 2 · Open the quote</b> The BUY action opens the same confirmation window used throughout Ossper.';
+      openTrade(marketId,'YES','BUY');
+      demoCoachTimer=setTimeout(()=>demoCoachQuoteStep(),650);
+    },760);
+  },800);
+}
+function demoCoachQuoteStep(){
+  const cursor=document.getElementById('demoCoachCursor'),banner=document.getElementById('demoCoachBanner'),qty=document.getElementById('qty'),confirm=document.getElementById('confirmBtn');
+  if(!cursor||!banner||!qty||!confirm)return;
+  banner.innerHTML='<b>Step 3 · Review the quote</b> The quantity, total debit, fee, and average price are shown before anything is submitted.';
+  cursor.style.display='block';
+  demoCursorTo(qty,false);
+  demoCoachTimer=setTimeout(()=>{
+    banner.innerHTML='<b>Your turn.</b> Change the quantity, review the quote, then Confirm or Cancel. Nothing is submitted by the guide.';
+    demoCursorTo(confirm,false);
+    setTimeout(()=>{cursor.style.display='none'},750);
+  },900);
+}
+function beginGuideNavigation(){try{sessionStorage.setItem('ossper_help_return','1')}catch{};showGuideReturn()}
+function showGuideReturn(){const b=document.getElementById('guideReturn');if(b)b.style.display='inline-flex'}
+function hideGuideReturn(){const b=document.getElementById('guideReturn');if(b)b.style.display='none'}
+function returnToGuide(){try{sessionStorage.removeItem('ossper_help_return')}catch{};hideGuideReturn();finishGuide();go('help')}
 function guideTo(kind){
   closeHowItWorksDemo();
+  beginGuideNavigation();
   if(kind==='help'){go('activity');startGuide('activity','Activity','This is where you can review your trade history and verify what happened.');return;}
   if(kind==='notifications'){go('home');setTimeout(()=>startGuide('notifications','Notification bell','Click the highlighted bell to open Notifications. This guide step completes when you open it.'),100);return;}
   if(kind==='freeze'){window.location.href='/admin';return;}
@@ -539,7 +608,7 @@ function renderSeasonMe(){
 }
 
 
-async function boot(){applyPrefs();if(!accountId){const s=await api("/api/session",{method:"POST",body:"{}"});accountId=s.accountId;localStorage.setItem(KEY,accountId)}await loadAuth();await refresh();await loadSeasonMe();startSeasonMatchRefresh();maybeShowWelcome();loadNotifications();const initial=location.hash.replace("#","");if(["home","markets","tournaments","wagers","activity","portfolio","season","settings","help","about"].includes(initial))go(initial);else go("home")}
+async function boot(){applyPrefs();if(!accountId){const s=await api("/api/session",{method:"POST",body:"{}"});accountId=s.accountId;localStorage.setItem(KEY,accountId)}await loadAuth();await refresh();await loadSeasonMe();startSeasonMatchRefresh();maybeShowWelcome();loadNotifications();const initial=location.hash.replace("#","");if(["home","markets","tournaments","wagers","activity","portfolio","season","settings","help","about"].includes(initial))go(initial);else go("home");try{if(sessionStorage.getItem('ossper_help_return')==='1'&&initial!=='help')showGuideReturn()}catch{}}
 function openTrade(marketId,side,action){if(systemFrozen){alert("Ossper is currently frozen by administration.");return}pending={marketId,side,action};document.getElementById("qty").value=10;const snap=state.find(x=>x.market.id===marketId);if(!snap)return;const m=snap.market;document.getElementById("modalTitle").textContent=`${action==="BUY"?"Buy":"Sell"} ${side}`;document.getElementById("modalSub").textContent=`${m.question} · market depth ${money(m.liquidity)}`;document.getElementById("modalBack").style.display="flex";updateQuote()}
 async function updateQuote(){if(!pending)return;if(systemFrozen){document.getElementById("quote").textContent="Trading is currently paused.";return}const qty=Math.floor(Number(document.getElementById("qty").value));if(!qty||qty<1){document.getElementById("quote").textContent="Enter a whole-number quantity.";return}try{const q=await api("/api/quote",{method:"POST",body:JSON.stringify({...pending,quantity:qty})});const snap=state.find(x=>x.market.id===pending.marketId);const pos=snap?posFor(snap,pending.side):null;const gross=Number(q.gross||0),fee=Number(q.fee||0),net=pending.action==="BUY"?Number(q.total||0):gross-fee;let html=`<div class="quoteMain ${pending.action==="BUY"?"green":"red"}">${pending.action==="BUY"?"TOTAL DEBIT":"NET CREDIT"} <b>${money(net)}</b></div>`;if(pending.action==="SELL"&&pos){const costBasis=qty*Number(pos.avg_cost||0),pl=net-costBasis;html+=`<div class="quoteDetail"><span>Cost basis</span><b>${money(costBasis)}</b></div><div class="quoteDetail"><span>Estimated P/L</span><b class="${pnlClass(pl)}">${pnlText(pl)}</b></div>`}else if(pending.action==="BUY"){html+=`<div class="quoteDetail"><span>Added to invested capital</span><b>${money(net)}</b></div>`}html+=`<div class="quoteMeta"><span>Avg price <b>${prob(q.averagePrice)}</b></span><span>Fee <b>${money(fee)}</b></span><span>${snap?.market?.market_type==="FIXED"?"Fixed odds":"Price move"} <b>${snap?.market?.market_type==="FIXED"?"Locked":`${q.priceMove>=0?"+":""}${(q.priceMove*100).toFixed(2)}¢`}</b></span></div>`;document.getElementById("quote").innerHTML=html}catch(e){document.getElementById("quote").textContent=e.message}}
 function renderWagers(){

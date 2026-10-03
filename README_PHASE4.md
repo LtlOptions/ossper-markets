@@ -34,3 +34,14 @@ Portfolio chart coordinate work, notification mutual-close behavior, admin/test 
 - Added an on-demand interactive demo market launched from How It Works.
 - Removed the always-visible demo market from normal Home, Markets, Tournaments, and wager pickers; it remains available through the guide.
 - Preserved existing virtual-money trading flow and backend logic.
+
+
+## v2.2.2 — Guided Demo / Dropdown / Guide Navigation Hotfix
+- Settings menu is layered above the notification panel so desktop Preferences/Admin/Help controls remain usable.
+- Notification dropdown is click-open only; the old invisible hover bridge was removed so it cannot create a large transparent hitbox or unexpectedly reopen.
+- Account/mobile navigation layering is explicitly separated from notification UI.
+- Added a persistent “Back to How It Works” control when a user enters another area from the guide.
+- Interactive demo now gives a short visual cursor walkthrough of BUY → quote review, then hands control to the user.
+- The demo walkthrough never submits a trade automatically.
+- Trade confirmation is elevated above the demo modal so the quote/confirmation screen is fully interactive.
+- No database or market-engine changes.
