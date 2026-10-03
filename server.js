@@ -386,6 +386,13 @@ async function initDb() {
       CHECK (status IN ('SCHEDULED','LIVE','COMPLETE','CANCELLED'))
     );
     CREATE INDEX IF NOT EXISTS season_matches_season_idx ON season_matches(season_id, match_number);
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT '1v1';
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS participant_a_ids UUID[] NOT NULL DEFAULT '{}';
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS participant_b_ids UUID[] NOT NULL DEFAULT '{}';
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_format_check CHECK (format IN ('1v1','2v2'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
     CREATE TABLE IF NOT EXISTS season_markets (
       id UUID PRIMARY KEY,
@@ -1785,6 +1792,90 @@ app.post("/api/admin/seasons/:seasonId/players/:playerId/status", adminOrOwner, 
   finally{client.release();}
 });
 
+/* Phase 3 — Test Season match integration */
+app.get("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||"");
+  try{
+    const q=await pool.query(`
+      SELECT sm.*, s.name AS season_name, s.status AS season_status,
+        COALESCE((SELECT COUNT(*) FROM season_markets sx WHERE sx.match_id=sm.id),0)::int AS market_count,
+        COALESCE((SELECT json_agg(json_build_object('id',a.id,'displayName',COALESCE(a.display_name,'Unnamed'),'discordId',a.discord_id) ORDER BY COALESCE(a.display_name,''))
+                  FROM accounts a WHERE a.id=ANY(sm.participant_a_ids)), '[]'::json) AS participant_a,
+        COALESCE((SELECT json_agg(json_build_object('id',a.id,'displayName',COALESCE(a.display_name,'Unnamed'),'discordId',a.discord_id) ORDER BY COALESCE(a.display_name,''))
+                  FROM accounts a WHERE a.id=ANY(sm.participant_b_ids)), '[]'::json) AS participant_b
+      FROM season_matches sm JOIN seasons s ON s.id=sm.season_id
+      WHERE sm.season_id=$1 ORDER BY sm.match_number ASC`,[seasonId]);
+    res.set('Cache-Control','no-store'); res.json(q.rows);
+  }catch(e){console.error('GET season matches',e);res.status(500).json({error:'Unable to load season matches.'});}
+});
+
+app.post("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||"");
+  const format=String(req.body?.format||'1v1').toLowerCase();
+  const aIds=Array.isArray(req.body?.participantAIds)?req.body.participantAIds.map(String):[];
+  const bIds=Array.isArray(req.body?.participantBIds)?req.body.participantBIds.map(String):[];
+  const description=String(req.body?.description||'').trim().slice(0,1000);
+  const aLabel=String(req.body?.sideA||'').trim().slice(0,160);
+  const bLabel=String(req.body?.sideB||'').trim().slice(0,160);
+  const scheduledAt=req.body?.scheduledAt||null;
+  if(!['1v1','2v2'].includes(format)) return res.status(400).json({error:'Format must be 1v1 or 2v2.'});
+  const expected=format==='1v1'?1:2;
+  if(aIds.length!==expected || bIds.length!==expected) return res.status(400).json({error:`${format} requires ${expected} participant${expected===1?'':'s'} on each side.`});
+  if(new Set([...aIds,...bIds]).size !== aIds.length+bIds.length) return res.status(400).json({error:'A player cannot appear on both sides of the same match.'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const sq=await client.query('SELECT * FROM seasons WHERE id=$1 FOR UPDATE',[seasonId]);
+    if(!sq.rows.length) throw new Error('Season not found.');
+    const season=sq.rows[0];
+    if(!['DRAFT','REGISTRATION','LIVE'].includes(season.status)) throw new Error('Matches can only be created before or during a live season.');
+    const ids=[...aIds,...bIds];
+    const pq=await client.query(`SELECT account_id,COALESCE(a.display_name,'Unnamed') AS display_name FROM season_players sp JOIN accounts a ON a.id=sp.account_id WHERE sp.season_id=$1 AND sp.status='ACTIVE' AND sp.account_id=ANY($2::uuid[])`,[seasonId,ids]);
+    if(pq.rows.length!==ids.length) throw new Error('Every participant must be an active player enrolled in this season.');
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,[`season-match-${seasonId}`]);
+    const nq=await client.query('SELECT COALESCE(MAX(match_number),0)+1 AS next_number FROM season_matches WHERE season_id=$1',[seasonId]);
+    const matchNumber=Number(nq.rows[0].next_number);
+    const map=new Map(pq.rows.map(r=>[r.account_id,r.display_name]));
+    const defaultA=aIds.map(id=>map.get(id)||'Unnamed').join(' + ');
+    const defaultB=bIds.map(id=>map.get(id)||'Unnamed').join(' + ');
+    const sideA=aLabel||defaultA, sideB=bLabel||defaultB;
+    const title=`Match #${String(matchNumber).padStart(3,'0')} · ${sideA} vs ${sideB}`;
+    const id=crypto.randomUUID();
+    const ins=await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,started_at,format,participant_a_ids,participant_b_ids,description) VALUES ($1,$2,$3,$4,$5,$6,'SCHEDULED',$7,$8,$9::uuid[],$10::uuid[],$11) RETURNING *`,[id,seasonId,matchNumber,title,sideA,sideB,scheduledAt||null,format,aIds,bIds,description]);
+    const actor=req.admin?.accountId||req.admin?.discordId||'admin';
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_MATCH_CREATED',$2,$3)`,[actor,JSON.stringify({matchId:id,matchNumber,format,participantAIds:aIds,participantBIds:bIds,sideA,sideB,scheduledAt}),seasonId]);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,match:ins.rows[0]});
+  }catch(e){await client.query('ROLLBACK');console.error('POST season match',e);res.status(400).json({error:e.message||'Unable to create season match.'});}
+  finally{client.release();}
+});
+
+app.post("/api/admin/seasons/:seasonId/matches/:matchId/status", adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||''); const matchId=String(req.params.matchId||''); const next=String(req.body?.status||'').toUpperCase();
+  const winner=String(req.body?.winner||'').trim().slice(0,160);
+  if(!['SCHEDULED','LIVE','COMPLETE','CANCELLED'].includes(next)) return res.status(400).json({error:'Invalid match status.'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const q=await client.query('SELECT sm.*,s.status AS season_status FROM season_matches sm JOIN seasons s ON s.id=sm.season_id WHERE sm.id=$1 AND sm.season_id=$2 FOR UPDATE',[matchId,seasonId]);
+    if(!q.rows.length) throw new Error('Season match not found.');
+    const row=q.rows[0];
+    const allowed=(row.status==='SCHEDULED'&&['LIVE','CANCELLED'].includes(next)) || (row.status==='LIVE'&&['COMPLETE','CANCELLED'].includes(next));
+    if(!allowed) throw new Error(`Cannot change match from ${row.status} to ${next}.`);
+    if(next==='LIVE' && row.season_status!=='LIVE') throw new Error('The season must be LIVE before a match can go LIVE.');
+    if(next==='COMPLETE' && !winner) throw new Error('A winner is required to complete the match.');
+    const now=next==='LIVE'?'started_at':next==='COMPLETE'?'completed_at':null;
+    const sets=['status=$1']; const params=[next];
+    if(next==='LIVE'){sets.push('started_at=COALESCE(started_at,NOW())');}
+    if(next==='COMPLETE'){params.push(winner);sets.push(`winner=$${params.length}`,'completed_at=COALESCE(completed_at,NOW())','resolved_by=$'+(params.length+1));params.push(req.admin?.accountId||req.admin?.discordId||'admin');}
+    if(next==='CANCELLED'){sets.push('completed_at=COALESCE(completed_at,NOW())');}
+    params.push(matchId);
+    const updated=await client.query(`UPDATE season_matches SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`,params);
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_MATCH_STATUS_CHANGED',$2,$3)`,[req.admin?.accountId||req.admin?.discordId||'admin',JSON.stringify({matchId,previousStatus:row.status,newStatus:next,winner:winner||null}),seasonId]);
+    await client.query('COMMIT'); res.json({ok:true,match:updated.rows[0]});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to update season match.'});}finally{client.release();}
+});
+
 app.get("/api/season/me", async (req,res)=>{
   const accountId=await requestAccountId(req);
   if(!accountId) return res.json({enrolled:false,season:null,player:null});
@@ -1816,6 +1907,18 @@ app.get("/api/season/me", async (req,res)=>{
       player:{id:r.player_id,status:r.player_status,startingBalance:Number(r.player_starting_balance),currentPoints:totalPoints,availablePoints:Math.max(0,totalPoints-locked),lockedPoints:locked,realizedPnl:Number(r.realized_pnl||0),totalWagered:Number(r.total_wagered||0),totalWinnings:Number(r.total_winnings||0),totalLosses:Number(r.total_losses||0),predictions:Number(r.predictions||0),correctPredictions:Number(r.correct_predictions||0),incorrectPredictions:Number(r.incorrect_predictions||0),accuracy:Number(r.accuracy||0),roi:Number(r.roi||0),rank:r.current_rank||null}
     });
   }catch(e){console.error("GET /api/season/me",e);res.status(500).json({error:"Unable to load your Test Season wallet."});}
+});
+
+app.get("/api/season/matches", async (req,res)=>{
+  const accountId=await requestAccountId(req);
+  if(!accountId) return res.json({enrolled:false,matches:[]});
+  try{
+    const sq=await pool.query(`SELECT sp.season_id FROM season_players sp JOIN seasons s ON s.id=sp.season_id WHERE sp.account_id=$1 AND sp.status IN ('ACTIVE','SUSPENDED') AND s.status IN ('REGISTRATION','LIVE','PAUSED') ORDER BY CASE s.status WHEN 'LIVE' THEN 0 WHEN 'PAUSED' THEN 1 ELSE 2 END,s.created_at DESC LIMIT 1`,[accountId]);
+    if(!sq.rows.length) return res.json({enrolled:false,matches:[]});
+    const seasonId=sq.rows[0].season_id;
+    const q=await pool.query(`SELECT sm.id,sm.season_id,sm.match_number,sm.title,sm.participant_a,sm.participant_b,sm.status,sm.winner,sm.scheduled_at,sm.started_at,sm.completed_at,sm.format,sm.description,COALESCE((SELECT COUNT(*) FROM season_markets sx WHERE sx.match_id=sm.id),0)::int AS market_count FROM season_matches sm WHERE sm.season_id=$1 ORDER BY sm.match_number ASC`,[seasonId]);
+    res.set('Cache-Control','no-store');res.json({enrolled:true,matches:q.rows});
+  }catch(e){console.error('GET /api/season/matches',e);res.status(500).json({error:'Unable to load season matches.'});}
 });
 
 app.get("/api/admin/markets", adminOnly, async (_req, res) => {
