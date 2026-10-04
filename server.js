@@ -333,6 +333,7 @@ async function initDb() {
       CHECK (starting_balance >= 0)
     );
     CREATE INDEX IF NOT EXISTS seasons_status_idx ON seasons(status, created_at DESC);
+    ALTER TABLE seasons ADD COLUMN IF NOT EXISTS tournament_run INTEGER NOT NULL DEFAULT 1;
 
     CREATE TABLE IF NOT EXISTS season_players (
       id UUID PRIMARY KEY,
@@ -488,6 +489,20 @@ async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS rating_history_account_idx ON rating_history(account_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS player_ratings_rating_idx ON player_ratings(rating DESC, updated_at ASC);
+
+    CREATE TABLE IF NOT EXISTS season_competitive_snapshots (
+      season_id UUID NOT NULL REFERENCES seasons(id) ON DELETE RESTRICT,
+      run_number INTEGER NOT NULL,
+      account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+      rating INTEGER NOT NULL DEFAULT 1200,
+      matches_played INTEGER NOT NULL DEFAULT 0,
+      wins INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0,
+      peak_rating INTEGER NOT NULL DEFAULT 1200,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (season_id, run_number, account_id)
+    );
+    CREATE INDEX IF NOT EXISTS season_competitive_snapshots_idx ON season_competitive_snapshots(season_id, run_number);
   `);
 
   await pool.query(`
@@ -2101,6 +2116,45 @@ app.post("/api/admin/seasons/:seasonId/matches", adminOrModerator, async (req,re
   finally{client.release();}
 });
 
+app.post("/api/admin/seasons/:seasonId/restart", adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||'');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`season-restart-${seasonId}`]);
+    const sq=await client.query('SELECT * FROM seasons WHERE id=$1 FOR UPDATE',[seasonId]);
+    if(!sq.rows.length) throw new Error('Test Season not found.');
+    const season=sq.rows[0];
+    if(!['REGISTRATION','LIVE','PAUSED'].includes(season.status)) throw new Error('Only an active Test Season can be restarted.');
+    const marketLinks=await client.query('SELECT COUNT(*)::int AS count FROM season_markets WHERE season_id=$1',[seasonId]);
+    if(Number(marketLinks.rows[0].count)>0) throw new Error('This tournament already has linked prediction markets. Finish/void those markets before restarting; the restart is intentionally non-destructive to market history.');
+
+    const run=Number(season.tournament_run||1);
+    const nextRun=run+1;
+    const actor=req.admin?.accountId||req.admin?.discordId||'admin';
+
+    // Restore the ELO state captured when the current tournament run began.
+    const snap=await client.query(`SELECT * FROM season_competitive_snapshots WHERE season_id=$1 AND run_number=$2`,[seasonId,run]);
+    for(const row of snap.rows){
+      await client.query(`INSERT INTO player_ratings(account_id,rating,matches_played,wins,losses,peak_rating,updated_at) VALUES($1,$2,$3,$4,$5,$6,NOW()) ON CONFLICT(account_id) DO UPDATE SET rating=EXCLUDED.rating,matches_played=EXCLUDED.matches_played,wins=EXCLUDED.wins,losses=EXCLUDED.losses,peak_rating=EXCLUDED.peak_rating,updated_at=NOW()`,[row.account_id,row.rating,row.matches_played,row.wins,row.losses,row.peak_rating]);
+    }
+
+    // Tournament artifacts are reset; the enrolled roster and season identity remain.
+    await client.query('DELETE FROM season_results WHERE season_id=$1',[seasonId]);
+    await client.query('DELETE FROM season_point_entries WHERE season_id=$1',[seasonId]);
+    await client.query('DELETE FROM season_matches WHERE season_id=$1',[seasonId]);
+    await client.query(`UPDATE season_players SET competitive_points=0,matches_played=0,wins=0,losses=0,tournaments_played=0,tournament_wins=0,final_rank=NULL,final_points=NULL,status=CASE WHEN status='SUSPENDED' THEN 'ACTIVE' ELSE status END WHERE season_id=$1`,[seasonId]);
+    await client.query(`UPDATE season_stats SET predictions=0,correct_predictions=0,incorrect_predictions=0,points_won=0,points_lost=0,roi=0,accuracy=0,current_rank=NULL WHERE season_id=$1`,[seasonId]);
+    await client.query(`DELETE FROM season_competitive_snapshots WHERE season_id=$1 AND run_number=$2`,[seasonId,run]);
+
+    await client.query(`UPDATE seasons SET tournament_run=$1,status='REGISTRATION',started_at=NULL,ended_at=NULL,archived_at=NULL,registration_open_at=NOW() WHERE id=$2`,[nextRun,seasonId]);
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_TOURNAMENT_RESTARTED',$2,$3)`,[actor,JSON.stringify({previousRun:run,newRun:nextRun,restoredRatings:snap.rows.length,rosterPreserved:true}),seasonId]);
+    await client.query('COMMIT');
+    res.json({ok:true,seasonId,run:nextRun,restoredRatings:snap.rows.length,rosterPreserved:true});
+  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to restart tournament.'});}
+  finally{client.release();}
+});
+
 app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,res)=>{
   const seasonId=String(req.params.seasonId||'');
   const format=String(req.body?.format||'1v1').toLowerCase();
@@ -2119,6 +2173,11 @@ app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,re
     if(players.length<2) throw new Error('At least 2 active players are required.');
     if(players.length>32) throw new Error('Automatic brackets are capped at 32 players for this patch.');
     const bracketId=crypto.randomUUID();
+    const runNumber=Number(sq.rows[0].tournament_run||1);
+    for(const player of players){
+      const rating=await ensurePlayerRating(client,player.account_id);
+      await client.query(`INSERT INTO season_competitive_snapshots(season_id,run_number,account_id,rating,matches_played,wins,losses,peak_rating) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,[seasonId,runNumber,player.account_id,rating.rating,rating.matches_played,rating.wins,rating.losses,rating.peak_rating]);
+    }
     const targetSize=2 ** Math.ceil(Math.log2(players.length));
     const shuffled=[...players];
     for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
@@ -2175,10 +2234,10 @@ app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,re
       }
     }
     const actor=req.admin?.accountId||req.admin?.discordId||'admin';
-    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_BRACKET_GENERATED',$2,$3)`,[actor,JSON.stringify({bracketId,format,playerCount:players.length,rounds:rounds.length}),seasonId]);
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_BRACKET_GENERATED',$2,$3)`,[actor,JSON.stringify({bracketId,format,playerCount:players.length,rounds:rounds.length,runNumber}),seasonId]);
     await client.query('COMMIT');
     const byeCount=rounds.flat().filter(m=>m.status==='COMPLETE').length;
-    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:rounds.length,byes:byeCount});
+    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:rounds.length,byes:byeCount,runNumber});
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to generate bracket.'});}
   finally{client.release();}
 });
