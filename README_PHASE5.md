@@ -7,10 +7,10 @@ This patch starts the competitive Ossper layer without replacing the existing ma
 ## Included
 
 ### Tournament / bracket engine
-- Automatic 1v1 single-elimination bracket generation for 2/4/8/16/32 active Test Season players.
-- Round and bracket-slot metadata on season matches.
-- Winner advancement into the next round is server-authoritative.
-- Matches cannot start until both sides are populated.
+- Automatic 1v1 double-elimination bracket generation for 2–32 active Test Season players, with Winners Bracket, Losers Bracket, and a conditional Grand Final reset.
+- Round, bracket-slot, bracket-phase, source-match, winner-route and loser-route metadata on season matches.
+- Winner and loser advancement are server-authoritative; a first loss drops a player into the Losers Bracket and a second loss eliminates them.
+- Matches cannot start until both sides are populated; BYEs and empty loser slots resolve automatically without awarding ELO or competitive points.
 - Match completion records a winner side (`A` / `B`) rather than trusting a frontend label.
 
 ### Competitive points
@@ -28,14 +28,15 @@ This patch starts the competitive Ossper layer without replacing the existing ma
 
 ### Admin UI
 - Generate bracket button in Test Season match manager.
-- Round-aware match display.
+- Round-aware double-elimination bracket display with directional arrows and winner/loss routing.
 - Record-result flow asks for Side A or Side B.
-- Competitive leaderboard shows ELO, points, W-L and peak rating.
+- Competitive leaderboard shows ELO, points, W-L and peak rating; the admin view also shows an elimination breakdown and champion when the Grand Final is complete.
 
 ## API additions
 - `POST /api/admin/seasons/:seasonId/bracket`
 - `GET /api/admin/seasons/:seasonId/leaderboard`
 - `GET /api/leaderboard`
+- `GET /api/admin/seasons/:seasonId/eliminations`
 - Existing season match status endpoint now records competitive results atomically.
 
 ## Deliberately next

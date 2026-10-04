@@ -443,9 +443,31 @@ async function initDb() {
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS round_number INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS bracket_slot INTEGER;
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS next_match_id UUID REFERENCES season_matches(id) ON DELETE SET NULL;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS next_match_side TEXT;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS loser_next_match_id UUID REFERENCES season_matches(id) ON DELETE SET NULL;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS loser_next_side TEXT;
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS bracket_id UUID;
-    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS winner_side TEXT;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS bracket_phase TEXT NOT NULL DEFAULT 'WINNERS';
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS source_a_match_id UUID REFERENCES season_matches(id) ON DELETE SET NULL;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS source_a_result TEXT;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS source_b_match_id UUID REFERENCES season_matches(id) ON DELETE SET NULL;
+    ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS source_b_result TEXT;
     ALTER TABLE season_matches ADD COLUMN IF NOT EXISTS result_recorded_at TIMESTAMPTZ;
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_bracket_phase_check CHECK (bracket_phase IN ('WINNERS','LOSERS','GRAND_FINAL'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_next_side_check CHECK (next_match_side IS NULL OR next_match_side IN ('A','B'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_loser_next_side_check CHECK (loser_next_side IS NULL OR loser_next_side IN ('A','B'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_source_a_result_check CHECK (source_a_result IS NULL OR source_a_result IN ('WINNER','LOSER'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      ALTER TABLE season_matches ADD CONSTRAINT season_matches_source_b_result_check CHECK (source_b_result IS NULL OR source_b_result IN ('WINNER','LOSER'));
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     DO $$ BEGIN
       ALTER TABLE season_matches ADD CONSTRAINT season_matches_winner_side_check CHECK (winner_side IS NULL OR winner_side IN ('A','B'));
     EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -1991,7 +2013,7 @@ async function recordCompetitiveMatchResult(client, matchId, winnerSide, actor) 
     const before = Number(ratings.get(id).rating || ELO_START);
     const delta = isWinner ? winnerDelta : loserDelta;
     const after = before + delta;
-    const r = await client.query(`
+    await client.query(`
       INSERT INTO player_ratings (account_id,rating,matches_played,wins,losses,peak_rating,updated_at)
       VALUES ($1,$2,1,$3,$4,$2,NOW())
       ON CONFLICT (account_id) DO UPDATE SET
@@ -2005,26 +2027,46 @@ async function recordCompetitiveMatchResult(client, matchId, winnerSide, actor) 
     `, [id, after, isWinner ? 1 : 0, isWinner ? 0 : 1]);
     await client.query(`INSERT INTO rating_history (id,account_id,season_id,match_id,rating_before,rating_after,delta,opponent_rating,result) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [crypto.randomUUID(), id, match.season_id, match.id, before, after, delta, Math.round(isWinner ? loserAvg : winnerAvg), isWinner ? 'WIN' : 'LOSS']);
     await client.query(`UPDATE season_players SET matches_played=matches_played+1,wins=wins+$1,losses=losses+$2 WHERE season_id=$3 AND account_id=$4`, [isWinner ? 1 : 0, isWinner ? 0 : 1, match.season_id, id]);
-    await awardCompetitivePoints(client,{seasonId:match.season_id,accountId:id,matchId:match.id,entryType:'MATCH_PARTICIPATION',points:COMPETITIVE_POINTS.PARTICIPATION,details:{round:match.round_number}});
-    if (isWinner) await awardCompetitivePoints(client,{seasonId:match.season_id,accountId:id,matchId:match.id,entryType:'MATCH_WIN',points:COMPETITIVE_POINTS.WIN,details:{round:match.round_number}});
+    await awardCompetitivePoints(client,{seasonId:match.season_id,accountId:id,matchId:match.id,entryType:'MATCH_PARTICIPATION',points:COMPETITIVE_POINTS.PARTICIPATION,details:{round:match.round_number,bracketPhase:match.bracket_phase}});
+    if (isWinner) await awardCompetitivePoints(client,{seasonId:match.season_id,accountId:id,matchId:match.id,entryType:'MATCH_WIN',points:COMPETITIVE_POINTS.WIN,details:{round:match.round_number,bracketPhase:match.bracket_phase}});
   }
 
   await client.query(`UPDATE season_matches SET status='COMPLETE',winner=$1,winner_side=$2,resolved_by=$3,completed_at=COALESCE(completed_at,NOW()),result_recorded_at=NOW() WHERE id=$4`, [winnerSide === 'A' ? match.participant_a : match.participant_b, winnerSide, actor, match.id]);
   await client.query(`INSERT INTO season_results (id,season_id,match_id,outcome,resolved_by) VALUES ($1,$2,$3,$4,$5)`, [crypto.randomUUID(), match.season_id, match.id, winnerSide, actor]);
-  await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_MATCH_RESULT_RECORDED',$2,$3)`, [actor, JSON.stringify({matchId:match.id,winnerSide,winnerIds:winners,loserIds:losers,eloDelta:winnerDelta,points:COMPETITIVE_POINTS}), match.season_id]);
+  await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_MATCH_RESULT_RECORDED',$2,$3)`, [actor, JSON.stringify({matchId:match.id,winnerSide,winnerIds:winners,loserIds:losers,eloDelta:winnerDelta,points:COMPETITIVE_POINTS,bracketPhase:match.bracket_phase}), match.season_id]);
 
-  // If this match feeds another bracket slot, place the winner into the next match automatically.
-  if (match.next_match_id) {
-    const nextQ = await client.query(`SELECT * FROM season_matches WHERE id=$1 FOR UPDATE`, [match.next_match_id]);
-    if (nextQ.rows.length) {
-      const next = nextQ.rows[0];
-      const target = (Number(match.bracket_slot||1) % 2 === 1) ? 'A' : 'B';
-      const col = target === 'A' ? 'participant_a_ids' : 'participant_b_ids';
-      const labelCol = target === 'A' ? 'participant_a' : 'participant_b';
-      const ids = winners;
-      await client.query(`UPDATE season_matches SET ${col}=$1::uuid[], ${labelCol}=$2 WHERE id=$3`, [ids, winnerSide === 'A' ? match.participant_a : match.participant_b, next.id]);
+  const winnerTarget = match.next_match_id && match.next_match_side ? { id: match.next_match_id, side: match.next_match_side, ids: winners, label: winnerSide === 'A' ? match.participant_a : match.participant_b, result: 'WINNER' } : null;
+  const loserTarget = match.loser_next_match_id && match.loser_next_side ? { id: match.loser_next_match_id, side: match.loser_next_side, ids: losers, label: winnerSide === 'A' ? match.participant_b : match.participant_a, result: 'LOSER' } : null;
+
+  async function feed(target) {
+    if (!target) return;
+    const col = target.side === 'A' ? 'participant_a_ids' : 'participant_b_ids';
+    const labelCol = target.side === 'A' ? 'participant_a' : 'participant_b';
+    await client.query(`UPDATE season_matches SET ${col}=$1::uuid[], ${labelCol}=$2 WHERE id=$3`, [target.ids, target.label || 'TBD', target.id]);
+  }
+  await feed(winnerTarget);
+  await feed(loserTarget);
+
+  // Grand-final reset: the winners-bracket champion gets one loss. If the losers-bracket
+  // champion wins GF1, schedule the deciding rematch. Otherwise the tournament is over.
+  if (match.bracket_phase === 'GRAND_FINAL' && match.round_number === 1) {
+    const gf2 = await client.query(`SELECT * FROM season_matches WHERE bracket_id=$1 AND bracket_phase='GRAND_FINAL' AND round_number=2 LIMIT 1 FOR UPDATE`, [match.bracket_id]);
+    if (gf2.rows.length) {
+      const wbSource = await client.query(`SELECT participant_a_ids,participant_b_ids,winner_side FROM season_matches WHERE id=$1`, [match.source_a_match_id]);
+      const wbChampionIds = wbSource.rows.length ? (wbSource.rows[0].winner_side==='A'?wbSource.rows[0].participant_a_ids:wbSource.rows[0].participant_b_ids) : [];
+      const winningIds = winners;
+      const wbChampionWon = wbChampionIds.some(id => winningIds.includes(id));
+      if (wbChampionWon) {
+        await client.query(`UPDATE season_matches SET status='CANCELLED',completed_at=NOW(),description='Grand Final reset not needed — Winners Bracket champion won Grand Final #1' WHERE id=$1`, [gf2.rows[0].id]);
+      } else {
+        const aLabel = match.participant_a;
+        const bLabel = match.participant_b;
+        await client.query(`UPDATE season_matches SET participant_a_ids=$1::uuid[],participant_b_ids=$2::uuid[],participant_a=$3,participant_b=$4,status='SCHEDULED',resolved_by=NULL,completed_at=NULL,result_recorded_at=NULL,description='Deciding Grand Final reset — the Losers Bracket champion won Grand Final #1' WHERE id=$5`, [winners,losers,aLabel,bLabel,gf2.rows[0].id]);
+      }
     }
   }
+
+  await settleAutomaticBracketProgression(client, match.bracket_id);
   return {matchId:match.id,winnerSide,winnerIds:winners,loserIds:losers,eloDelta:winnerDelta};
 }
 
@@ -2155,6 +2197,63 @@ app.post("/api/admin/seasons/:seasonId/restart", adminOrModerator, async (req,re
   finally{client.release();}
 });
 
+async function settleAutomaticBracketProgression(client, bracketId) {
+  // Resolve winner/loser source slots and automatically advance BYEs. This keeps
+  // double-elimination brackets moving even when a non-power-of-two field creates
+  // empty loser slots.
+  for (let pass = 0; pass < 12; pass++) {
+    const q = await client.query(`SELECT * FROM season_matches WHERE bracket_id=$1 ORDER BY match_number ASC`, [bracketId]);
+    let changed = false;
+    for (const match of q.rows) {
+      if (!['SCHEDULED','COMPLETE'].includes(match.status)) continue;
+      const sides = [
+        {side:'A', sourceId:match.source_a_match_id, sourceResult:match.source_a_result, ids:match.participant_a_ids||[], label:match.participant_a||'TBD'},
+        {side:'B', sourceId:match.source_b_match_id, sourceResult:match.source_b_result, ids:match.participant_b_ids||[], label:match.participant_b||'TBD'}
+      ];
+      let unresolved = false;
+      for (const side of sides) {
+        if (!side.sourceId) continue;
+        const sq = await client.query(`SELECT status,participant_a_ids,participant_b_ids,participant_a,participant_b,winner_side,winner FROM season_matches WHERE id=$1`, [side.sourceId]);
+        if (!sq.rows.length || !['COMPLETE','CANCELLED'].includes(sq.rows[0].status)) { unresolved = true; continue; }
+        const src = sq.rows[0];
+        let ids = [];
+        let label = 'TBD';
+        if (src.status === 'COMPLETE') {
+          if (side.sourceResult === 'WINNER') {
+            ids = src.winner_side === 'A' ? (src.participant_a_ids||[]) : (src.participant_b_ids||[]);
+            label = src.winner || (src.winner_side === 'A' ? src.participant_a : src.participant_b) || 'TBD';
+          } else {
+            ids = src.winner_side === 'A' ? (src.participant_b_ids||[]) : (src.participant_a_ids||[]);
+            label = src.winner_side === 'A' ? (src.participant_b||'TBD') : (src.participant_a||'TBD');
+          }
+        }
+        const col = side.side === 'A' ? 'participant_a_ids' : 'participant_b_ids';
+        const labelCol = side.side === 'A' ? 'participant_a' : 'participant_b';
+        const current = side.ids.join(',');
+        const next = ids.join(',');
+        if (current !== next || String(side.label) !== String(label)) {
+          await client.query(`UPDATE season_matches SET ${col}=$1::uuid[],${labelCol}=$2 WHERE id=$3`, [ids,label,match.id]);
+          changed = true;
+        }
+      }
+      if (unresolved || !['SCHEDULED'].includes(match.status)) continue;
+      const a = (await client.query(`SELECT participant_a_ids,participant_b_ids FROM season_matches WHERE id=$1`, [match.id])).rows[0];
+      const aIds = a?.participant_a_ids||[], bIds = a?.participant_b_ids||[];
+      if (aIds.length && bIds.length) continue;
+      if (!aIds.length && !bIds.length && (match.source_a_match_id || match.source_b_match_id)) continue;
+      const winnerSide = aIds.length ? 'A' : (bIds.length ? 'B' : null);
+      if (!winnerSide) {
+        await client.query(`UPDATE season_matches SET status='CANCELLED',winner=NULL,winner_side=NULL,resolved_by='system:no-contest',completed_at=NOW(),result_recorded_at=NOW() WHERE id=$1`, [match.id]);
+      } else {
+        const label = winnerSide==='A' ? (await client.query(`SELECT participant_a FROM season_matches WHERE id=$1`,[match.id])).rows[0].participant_a : (await client.query(`SELECT participant_b FROM season_matches WHERE id=$1`,[match.id])).rows[0].participant_b;
+        await client.query(`UPDATE season_matches SET status='COMPLETE',winner=$1,winner_side=$2,resolved_by='system:bye',completed_at=NOW(),result_recorded_at=NOW() WHERE id=$3`, [label||'BYE',winnerSide,match.id]);
+      }
+      changed = true;
+    }
+    if (!changed) break;
+  }
+}
+
 app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,res)=>{
   const seasonId=String(req.params.seasonId||'');
   const format=String(req.body?.format||'1v1').toLowerCase();
@@ -2178,67 +2277,106 @@ app.post("/api/admin/seasons/:seasonId/bracket", adminOrModerator, async (req,re
       const rating=await ensurePlayerRating(client,player.account_id);
       await client.query(`INSERT INTO season_competitive_snapshots(season_id,run_number,account_id,rating,matches_played,wins,losses,peak_rating) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,[seasonId,runNumber,player.account_id,rating.rating,rating.matches_played,rating.wins,rating.losses,rating.peak_rating]);
     }
+
+    // Double-elimination graph. Winners bracket is followed by a standard
+    // alternating losers bracket, then a two-game-capable grand final.
     const targetSize=2 ** Math.ceil(Math.log2(players.length));
     const shuffled=[...players];
     for(let i=shuffled.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[shuffled[i],shuffled[j]]=[shuffled[j],shuffled[i]];}
     while(shuffled.length<targetSize) shuffled.push(null);
-    const rounds=[]; let current=[];
-    for(let i=0;i<shuffled.length;i+=2){
-      current.push({id:crypto.randomUUID(),round:1,slot:i/2+1,a:shuffled[i]?[shuffled[i]]:[],b:shuffled[i+1]?[shuffled[i+1]]:[]});
+    const k=Math.log2(targetSize);
+    const matches=[];
+    const wb=[];
+    const lb=[];
+    const make=(phase,round,slot)=>({id:crypto.randomUUID(),phase,round,slot,a:[],b:[],sourceA:null,sourceB:null,winnerNext:null,loserNext:null});
+
+    // Winners bracket.
+    for(let r=1;r<=k;r++){
+      const count=targetSize/(2**r); const arr=[];
+      for(let i=0;i<count;i++){
+        const m=make('WINNERS',r,i+1);
+        if(r===1){ m.a=shuffled[i*2]?[shuffled[i*2]]:[]; m.b=shuffled[i*2+1]?[shuffled[i*2+1]]:[]; }
+        else { const prev=wb[r-2]; m.sourceA={match:prev[i*2],result:'WINNER'}; m.sourceB={match:prev[i*2+1],result:'WINNER'}; }
+        arr.push(m); matches.push(m);
+      }
+      wb.push(arr);
     }
-    rounds.push(current);
-    let prev=current;
-    let round=2;
-    while(prev.length>1){
-      const next=[];
-      for(let i=0;i<prev.length;i+=2) next.push({id:crypto.randomUUID(),round,slot:i/2+1,a:[],b:[]});
-      rounds.push(next); prev=next; round++;
+    for(let r=1;r<k;r++) for(let i=0;i<wb[r-1].length;i++) wb[r-1][i].winnerNext={match:wb[r][Math.floor(i/2)],side:(i%2===0?'A':'B')};
+
+    // Losers bracket has 2k-2 rounds for a k-round winners bracket.
+    const lbRounds=Math.max(0,2*k-2);
+    for(let lr=1;lr<=lbRounds;lr++){
+      const count=targetSize/(2**(Math.floor((lr-1)/2)+2));
+      const arr=[];
+      for(let i=0;i<count;i++){const m=make('LOSERS',lr,i+1);arr.push(m);matches.push(m);}
+      lb.push(arr);
     }
-    const all=rounds.flat();
-    for(const m of all){
-      const aIds=m.a.map(x=>x.account_id), bIds=m.b.map(x=>x.account_id);
-      const aLabel=m.a.map(x=>x.display_name).join(' + ') || 'TBD';
-      const bLabel=m.b.map(x=>x.display_name).join(' + ') || 'TBD';
-      const title=`Round ${m.round} · Match ${m.slot} · ${aLabel} vs ${bLabel}`;
-      const byeWinner = aIds.length===1 && bIds.length===0 ? 'A' : (aIds.length===0 && bIds.length===1 ? 'B' : null);
-      const status = byeWinner ? 'COMPLETE' : 'SCHEDULED';
-      const winnerLabel = byeWinner==='A' ? aLabel : byeWinner==='B' ? bLabel : null;
-      await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,format,participant_a_ids,participant_b_ids,description,round_number,bracket_slot,bracket_id,winner,winner_side,resolved_by,completed_at,result_recorded_at) VALUES ($1,$2,(SELECT COALESCE(MAX(match_number),0)+1 FROM season_matches WHERE season_id=$2),$3,$4,$5,$6,'1v1',$7::uuid[],$8::uuid[],$9,$10,$11,$12,$13,$14,$15,$16,$17)`,[m.id,seasonId,title,aLabel,bLabel,status,aIds,bIds,`Automatic single-elimination bracket · Round ${m.round}${byeWinner?' · BYE':''}`,m.round,m.slot,bracketId,winnerLabel,byeWinner,byeWinner?'system:bye':null,byeWinner?new Date().toISOString():null,byeWinner?new Date().toISOString():null]);
-    }
-    // Propagate BYE winners through the bracket without awarding ELO or competitive points.
-    for(let r=0;r<rounds.length-1;r++){
-      for(let i=0;i<rounds[r].length;i++){
-        const match=rounds[r][i];
-        const next=rounds[r+1][Math.floor(i/2)];
-        const winner=match.a.length===1 && match.b.length===0 ? match.a[0] : (match.a.length===0 && match.b.length===1 ? match.b[0] : null);
-        if(winner){
-          const target=(i%2===0)?'A':'B';
-          if(target==='A'){next.a=[winner];}else{next.b=[winner];}
+    if(k>=2){
+      // W1 losers feed paired into L1.
+      for(let i=0;i<wb[0].length;i++) wb[0][i].loserNext={match:lb[0][Math.floor(i/2)],side:(i%2===0?'A':'B')};
+      // W2/W3/... losers enter the even-numbered LB round on side B.
+      for(let r=2;r<=k;r++){
+        const targetRoundIndex=2*r-3;
+        const target=lb[targetRoundIndex];
+        for(let i=0;i<wb[r-1].length;i++) wb[r-1][i].loserNext={match:target[i],side:'B'};
+      }
+      // L2, L4, ... receive a prior LB winner plus the corresponding WB loser.
+      // L3, L5, ... pair the winners from the preceding LB round.
+      for(let lr=2;lr<=lbRounds;lr++){
+        const arr=lb[lr-1];
+        if(lr%2===0){
+          const wbRound=lr/2+1; // L2 -> W2, L4 -> W3, ...
+          const prev=lb[lr-2]; const wbr=wb[wbRound-1];
+          for(let i=0;i<arr.length;i++){
+            arr[i].sourceA={match:prev[i],result:'WINNER'};
+            arr[i].sourceB={match:wbr[i],result:'LOSER'};
+          }
+        } else {
+          const prev=lb[lr-2];
+          for(let i=0;i<arr.length;i++){
+            arr[i].sourceA={match:prev[i*2],result:'WINNER'};
+            arr[i].sourceB={match:prev[i*2+1],result:'WINNER'};
+          }
         }
       }
     }
-    // Any newly-created one-player slots are also BYEs; mark them complete now.
-    for(const m of rounds.flat()){
-      if(m.round===1) continue;
-      const winner = m.a.length===1 && m.b.length===0 ? m.a[0] : (m.a.length===0 && m.b.length===1 ? m.b[0] : null);
-      if(winner){
-        const label=m.a.length===1?m.a[0].display_name:m.b[0].display_name;
-        const side=m.a.length===1?'A':'B';
-        await client.query(`UPDATE season_matches SET participant_a_ids=$1::uuid[],participant_b_ids=$2::uuid[],participant_a=$3,participant_b=$4,status='COMPLETE',winner=$5,winner_side=$6,resolved_by='system:bye',completed_at=NOW(),result_recorded_at=NOW() WHERE id=$7`,[m.a.map(x=>x.account_id),m.b.map(x=>x.account_id),m.a.map(x=>x.display_name).join(' + ')||'TBD',m.b.map(x=>x.display_name).join(' + ')||'TBD',label,side,m.id]);
-      }
+    // LB winner advances through the final LB match; WB final loser enters the
+    // last LB round automatically through the same even-round wiring above.
+    const lbFinal=lb.length?lb[lb.length-1][0]:null;
+    const wbFinal=wb[k-1][0];
+    const gf1=make('GRAND_FINAL',1,1);
+    gf1.sourceA={match:wbFinal,result:'WINNER'};
+    gf1.sourceB=lbFinal?{match:lbFinal,result:'WINNER'}:{match:wbFinal,result:'LOSER'};
+    matches.push(gf1);
+    const gf2=make('GRAND_FINAL',2,1);
+    gf2.sourceA={match:gf1,result:'WINNER'};
+    gf2.sourceB={match:gf1,result:'LOSER'};
+    matches.push(gf2);
+
+    const idSet=new Set(matches.map(m=>m.id));
+    for(const m of matches){
+      const aIds=m.a.map(x=>x.account_id), bIds=m.b.map(x=>x.account_id);
+      const aLabel=m.a.map(x=>x.display_name).join(' + ')||'TBD';
+      const bLabel=m.b.map(x=>x.display_name).join(' + ')||'TBD';
+      const title=m.phase==='WINNERS'?`Winners Round ${m.round} · Match ${m.slot}`:m.phase==='LOSERS'?`Losers Round ${m.round} · Match ${m.slot}`:`Grand Final${m.round===2?' Reset':''}`;
+      await client.query(`INSERT INTO season_matches (id,season_id,match_number,title,participant_a,participant_b,status,format,participant_a_ids,participant_b_ids,description,round_number,bracket_slot,bracket_id,bracket_phase,source_a_match_id,source_a_result,source_b_match_id,source_b_result) VALUES ($1,$2,(SELECT COALESCE(MAX(match_number),0)+1 FROM season_matches WHERE season_id=$2),$3,$4,$5,'SCHEDULED','1v1',$6::uuid[],$7::uuid[],$8,$9,$10,$11,$12,$13,$14,$15,$16)`,[m.id,seasonId,title,aLabel,bLabel, aIds,bIds,`Double-elimination · ${m.phase==='WINNERS'?'Winners Bracket':m.phase==='LOSERS'?'Losers Bracket':m.round===2?'Grand Final Reset':'Grand Final'} · Run ${runNumber}`,m.round,m.slot,bracketId,m.phase,m.sourceA?.match?.id||null,m.sourceA?.result||null,m.sourceB?.match?.id||null,m.sourceB?.result||null]);
     }
-    for(let r=0;r<rounds.length-1;r++){
-      for(let i=0;i<rounds[r].length;i++){
-        const parent=rounds[r][i]; const next=rounds[r+1][Math.floor(i/2)];
-        await client.query(`UPDATE season_matches SET next_match_id=$1 WHERE id=$2`,[next.id,parent.id]);
-      }
+    // Wire winner/loser destinations after all match rows exist.
+    for(const m of matches){
+      if(m.winnerNext) await client.query(`UPDATE season_matches SET next_match_id=$1,next_match_side=$2 WHERE id=$3`,[m.winnerNext.match.id,m.winnerNext.side,m.id]);
+      if(m.loserNext) await client.query(`UPDATE season_matches SET loser_next_match_id=$1,loser_next_side=$2 WHERE id=$3`,[m.loserNext.match.id,m.loserNext.side,m.id]);
     }
+    // Grand Final #2 is conditional and starts cancelled until GF1 requires it.
+    await client.query(`UPDATE season_matches SET status='CANCELLED',resolved_by='system:conditional',description='Grand Final reset is only played if the Losers Bracket champion wins Grand Final #1.' WHERE id=$1`,[gf2.id]);
+    // Let already-known BYEs cascade through both brackets.
+    await settleAutomaticBracketProgression(client,bracketId);
+
     const actor=req.admin?.accountId||req.admin?.discordId||'admin';
-    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_BRACKET_GENERATED',$2,$3)`,[actor,JSON.stringify({bracketId,format,playerCount:players.length,rounds:rounds.length,runNumber}),seasonId]);
+    await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'COMPETITIVE_BRACKET_GENERATED',$2,$3)`,[actor,JSON.stringify({bracketId,format,playerCount:players.length,rounds:k,losersRounds:lbRounds,grandFinal:true,runNumber}),seasonId]);
     await client.query('COMMIT');
-    const byeCount=rounds.flat().filter(m=>m.status==='COMPLETE').length;
-    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:rounds.length,byes:byeCount,runNumber});
-  }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to generate bracket.'});}
+    const qCount=await pool.query(`SELECT COUNT(*)::int AS count FROM season_matches WHERE bracket_id=$1`,[bracketId]);
+    res.status(201).json({ok:true,bracketId,playerCount:players.length,rounds:k,losersRounds:lbRounds,matches:qCount.rows[0].count,byes:targetSize-players.length,runNumber,doubleElimination:true});
+  }catch(e){await client.query('ROLLBACK');console.error('POST season bracket',e);res.status(400).json({error:e.message||'Unable to generate bracket.'});}
   finally{client.release();}
 });
 
@@ -2272,6 +2410,35 @@ app.post("/api/admin/seasons/:seasonId/matches/:matchId/status", adminOrModerato
     await client.query(`INSERT INTO audit_logs(actor,action,details,season_id) VALUES($1,'TEST_SEASON_MATCH_STATUS_CHANGED',$2,$3)`,[req.admin?.accountId||req.admin?.discordId||'admin',JSON.stringify({matchId,previousStatus:row.status,newStatus:next,winner:null}),seasonId]);
     await client.query('COMMIT'); res.json({ok:true,match:updated.rows[0]});
   }catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'Unable to update season match.'});}finally{client.release();}
+});
+
+app.get('/api/admin/seasons/:seasonId/eliminations', adminOrModerator, async (req,res)=>{
+  const seasonId=String(req.params.seasonId||'');
+  try{
+    const players=await pool.query(`SELECT sp.account_id,COALESCE(a.display_name,'Unnamed') AS display_name FROM season_players sp JOIN accounts a ON a.id=sp.account_id WHERE sp.season_id=$1 AND sp.status IN ('ACTIVE','SUSPENDED')`,[seasonId]);
+    const matches=await pool.query(`SELECT id,match_number,title,round_number,bracket_phase,participant_a_ids,participant_b_ids,participant_a,participant_b,winner_side,status,completed_at FROM season_matches WHERE season_id=$1 AND bracket_phase IN ('WINNERS','LOSERS','GRAND_FINAL') ORDER BY match_number ASC`,[seasonId]);
+    const losses=new Map(players.rows.map(p=>[p.account_id,{accountId:p.account_id,displayName:p.display_name,losses:0,eliminationMatch:null,eliminationPhase:null}]));
+    for(const m of matches.rows){
+      if(m.status!=='COMPLETE' || !['A','B'].includes(m.winner_side) || m.resolved_by==='system:bye') continue;
+      const ids=m.winner_side==='A'?(m.participant_b_ids||[]):(m.participant_a_ids||[]);
+      for(const id of ids){
+        const row=losses.get(id); if(!row) continue;
+        row.losses++;
+        if(row.losses>=2 && !row.eliminationMatch) { row.eliminationMatch={matchId:m.id,matchNumber:m.match_number,title:m.title,phase:m.bracket_phase,round:m.round_number}; row.eliminationPhase=m.bracket_phase; }
+      }
+    }
+    const all=[...losses.values()];
+    const eliminated=all.filter(x=>x.losses>=2).sort((a,b)=>(a.eliminationMatch?.matchNumber||0)-(b.eliminationMatch?.matchNumber||0));
+    const alive=all.filter(x=>x.losses<2).sort((a,b)=>a.losses-b.losses||a.displayName.localeCompare(b.displayName));
+    const gf=matches.rows.filter(m=>m.bracket_phase==='GRAND_FINAL' && m.status==='COMPLETE').sort((a,b)=>Number(a.round_number)-Number(b.round_number));
+    let champion=null;
+    const finalMatch=gf.length?gf[gf.length-1]:null;
+    if(finalMatch && ['A','B'].includes(finalMatch.winner_side)){
+      const id=(finalMatch.winner_side==='A'?(finalMatch.participant_a_ids||[]):(finalMatch.participant_b_ids||[]))[0];
+      champion=all.find(x=>x.accountId===id)||null;
+    }
+    res.set('Cache-Control','no-store');res.json({eliminated,alive,champion});
+  }catch(e){console.error('GET season eliminations',e);res.status(500).json({error:'Unable to load elimination breakdown.'});}
 });
 
 app.get("/api/season/public", async (_req,res)=>{
