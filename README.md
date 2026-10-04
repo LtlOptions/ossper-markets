@@ -136,3 +136,9 @@ Phase 1 Test Season API routes are wired to the existing admin UI. Season creati
 - Added a quick Season Workspace selector with direct Players and Matches actions, eliminating the need to scroll through the season archive.
 - Moved the player/match manager above the season history and auto-scrolls to it when opened.
 - Archived test seasons remain preserved and manageable; no database records are deleted.
+
+## Patch 2.3.3 — Visual tournament bracket
+- Admin Test Season match configuration now includes a persistent visual bracket above the match controls.
+- Bracket is grouped by round, shows player/TBD slots, BYEs, completion/live/scheduled state, and winners.
+- Clicking a bracket match jumps to its detailed match controls.
+- Competitive leaderboard no longer exposes raw Discord/test account IDs in the player list.
